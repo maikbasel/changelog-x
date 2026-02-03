@@ -1,0 +1,55 @@
+[package]
+name = "changelog-x"
+version = "0.1.0"
+edition = "2024"
+description = "Generate high-quality changelogs from conventional commits with AI enhancement"
+license = "MIT"
+repository = "https://github.com/yourusername/changelog-x"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Changelog generation
+git-cliff-core = "2"
+
+# AI integration
+genai = "0.1"
+
+# Interactive prompts
+inquire = "0.7"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Configuration (layered: defaults → user → project → env vars)
+config = "0.14"
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Config directories (cross-platform)
+directories = "5"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+nursery = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1
