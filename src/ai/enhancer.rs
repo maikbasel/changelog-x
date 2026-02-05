@@ -12,14 +12,14 @@ impl AiEnhancer {
         Self { config }
     }
 
-    /// Check if AI enhancement is enabled and configured
+    /// Check if AI enhancement is configured (provider is set)
     pub fn is_available(&self) -> bool {
-        self.config.enabled && self.config.provider.is_some()
+        self.config.is_configured()
     }
 
     /// Enhance the changelog content using AI
     pub async fn enhance(&self, _changelog: &str) -> Result<String, AiError> {
-        if !self.config.enabled {
+        if !self.config.is_configured() {
             return Err(AiError::NotConfigured);
         }
 
