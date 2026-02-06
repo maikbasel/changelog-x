@@ -51,9 +51,13 @@ directories = "6"
 
 # Secure credential storage
 keyring = "3"
+indexmap = "2.13.0"
+regex = "1.12.3"
+git2 = "0.20.4"
 
 [dev-dependencies]
 tempfile = "3"
+cargo-husky = { version = "1", default-features = false, features = ["precommit-hook", "run-cargo-test", "run-cargo-clippy", "run-cargo-fmt"] }
 
 [lints.rust]
 unsafe_code = "forbid"

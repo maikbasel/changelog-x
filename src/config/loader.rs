@@ -52,7 +52,8 @@ pub struct AiConfig {
 
 impl AiConfig {
     /// Check if AI is configured (provider is set)
-    pub fn is_configured(&self) -> bool {
+    #[must_use]
+    pub const fn is_configured(&self) -> bool {
         self.provider.is_some()
     }
 }
@@ -65,11 +66,13 @@ fn default_output() -> String {
 ///
 /// Returns the path to `~/.config/cgx/` on Linux/macOS
 /// or the equivalent on Windows.
+#[must_use]
 pub fn get_config_dir() -> Option<PathBuf> {
     ProjectDirs::from("", "", "cgx").map(|dirs| dirs.config_dir().to_path_buf())
 }
 
 /// Get the user config file path
+#[must_use]
 pub fn get_user_config_path() -> Option<PathBuf> {
     get_config_dir().map(|dir| dir.join("config.toml"))
 }
@@ -87,6 +90,11 @@ pub fn get_user_config_path() -> Option<PathBuf> {
 /// CGX_AI__MODEL=gpt-4o         # Sets ai.model
 /// CGX_CHANGELOG__OUTPUT=RELEASES.md  # Sets changelog.output
 /// ```
+///
+/// # Errors
+///
+/// Returns `ConfigError::Load` if configuration sources cannot be read.
+/// Returns `ConfigError::Parse` if configuration cannot be deserialized.
 pub fn load_config(config_override: Option<&str>) -> Result<AppConfig, ConfigError> {
     let mut builder = Config::builder();
 
@@ -127,6 +135,7 @@ pub fn load_config(config_override: Option<&str>) -> Result<AppConfig, ConfigErr
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used)]
 mod tests {
     use super::*;
 

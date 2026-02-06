@@ -1,5 +1,8 @@
 use anyhow::{Context, Result};
+use changelog_x::changelog::{ChangelogGenerator, GenerateOptions};
 use changelog_x::config::{get_user_config_path, load_config};
+use changelog_x::ui::Pipeline;
+use changelog_x::{AppError, ChangelogError};
 use clap::{Parser, Subcommand};
 use console::{Term, style};
 use inquire::Editor;
@@ -14,9 +17,9 @@ use tracing_subscriber::EnvFilter;
 #[command(author, version, about, long_about = None)]
 #[command(propagate_version = true)]
 struct Cli {
-    /// Enable verbose output
-    #[arg(short, long, global = true)]
-    verbose: bool,
+    /// Increase verbosity (-v debug, -vv trace)
+    #[arg(short, long, global = true, action = clap::ArgAction::Count)]
+    verbose: u8,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -39,12 +42,16 @@ enum Commands {
         output: String,
 
         /// Start from this git tag
-        #[arg(long)]
+        #[arg(long, conflicts_with = "unreleased")]
         from: Option<String>,
 
         /// End at this git tag
-        #[arg(long)]
+        #[arg(long, conflicts_with = "unreleased")]
         to: Option<String>,
+
+        /// Generate changelog for unreleased commits only (since latest tag)
+        #[arg(long, conflicts_with_all = ["from", "to"])]
+        unreleased: bool,
     },
 
     /// Enhance an existing changelog file with AI
@@ -111,19 +118,46 @@ enum ConfigAction {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
+    if let Err(err) = run().await {
+        let term = Term::stderr();
+
+        let _ = term.write_line(&format!("\n{} {err}", style("error:").red().bold()));
+
+        let source_chain: Vec<_> = std::iter::successors(
+            std::error::Error::source(err.as_ref() as &dyn std::error::Error),
+            |e| e.source(),
+        )
+        .collect();
+
+        for cause in &source_chain {
+            let _ = term.write_line(&format!("  {} {cause}", style("caused by:").dim()));
+        }
+
+        if let Some(app_err) = err.downcast_ref::<AppError>()
+            && let Some(help) = app_err.help_text()
+        {
+            let _ = term.write_line(&format!("  {} {help}", style("help:").yellow().bold()));
+        }
+
+        let _ = term.write_line("");
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize tracing with appropriate log level
-    let filter = if cli.verbose {
-        EnvFilter::new("debug")
-    } else {
-        EnvFilter::new("warn")
+    let filter = match cli.verbose {
+        0 => EnvFilter::new("warn,git_cliff_core=off"),
+        1 => EnvFilter::new("debug"),
+        _ => EnvFilter::new("trace"),
     };
 
     tracing_subscriber::fmt()
         .with_env_filter(filter)
-        .with_target(false)
+        .with_target(cli.verbose > 0)
         .without_time()
         .init();
 
@@ -134,7 +168,8 @@ async fn main() -> Result<()> {
             output,
             from,
             to,
-        }) => cmd_generate(ai, stdout, &output, from, to).await,
+            unreleased,
+        }) => cmd_generate(ai, stdout, &output, from, to, unreleased).await,
 
         Some(Commands::Enhance {
             file,
@@ -157,26 +192,103 @@ async fn main() -> Result<()> {
     }
 }
 
+#[allow(clippy::unused_async)] // Will use async when AI enhancement is implemented
 async fn cmd_generate(
     ai: bool,
     stdout: bool,
     output: &str,
     from: Option<String>,
     to: Option<String>,
+    unreleased: bool,
 ) -> Result<()> {
     debug!(
-        "Generate command: ai={}, stdout={}, output={}, from={:?}, to={:?}",
-        ai, stdout, output, from, to
+        "Generate command: ai={}, stdout={}, output={}, from={:?}, to={:?}, unreleased={}",
+        ai, stdout, output, from, to, unreleased
     );
 
     let term = Term::stdout();
-    term.write_line(&format!(
-        "{}",
-        style("Changelog generation not yet implemented").yellow()
-    ))?;
+
+    let pipeline = Pipeline::new(&[
+        "Loading configuration",
+        "Initializing repository",
+        "Resolving commits",
+        "Fetching data",
+        "Building releases",
+        "Generating changelog",
+    ]);
+
+    // Step 1: Loading configuration
+    pipeline.advance();
+    let config = load_config(None).context("Failed to load configuration")?;
+
+    // Generate changelog (steps 2-6 are advanced by the callback)
+    let generator = ChangelogGenerator::new(config.changelog.clone());
+    let options = GenerateOptions {
+        from_tag: from,
+        to_tag: to,
+        unreleased,
+    };
+
+    let changelog = match generator.generate(&options, Some(&|| pipeline.advance())) {
+        Ok(content) => {
+            pipeline.finish_all();
+            content
+        }
+        Err(ChangelogError::NoCommits) => {
+            pipeline.fail("No conventional commits found");
+            term.write_line("")?;
+            term.write_line("cgx requires commits following the Conventional Commits format:")?;
+            term.write_line(&format!("  {} add new feature", style("feat:").green()))?;
+            term.write_line(&format!("  {} resolve bug", style("fix:").green()))?;
+            term.write_line(&format!("  {} update readme", style("docs:").green()))?;
+            term.write_line("")?;
+            term.write_line(&format!(
+                "See: {}",
+                style("https://www.conventionalcommits.org")
+                    .cyan()
+                    .underlined()
+            ))?;
+            return Ok(());
+        }
+        Err(e) => {
+            pipeline.fail(&format!("{e}"));
+            return Err(e).context("Failed to generate changelog");
+        }
+    };
+
+    // Output: stdout or file
+    if stdout {
+        term.write_line(&changelog)?;
+    } else {
+        // Use CLI output flag if not default, otherwise use config
+        let output_path = if output == "CHANGELOG.md" {
+            &config.changelog.output
+        } else {
+            output
+        };
+
+        fs::write(output_path, &changelog)
+            .with_context(|| format!("Failed to write changelog to {output_path}"))?;
+
+        term.write_line(&format!(
+            "{} Changelog written to {}",
+            style("✓").green().bold(),
+            style(output_path).cyan()
+        ))?;
+    }
+
+    // AI enhancement (if --ai flag)
+    if ai {
+        term.write_line(&format!(
+            "{}",
+            style("AI enhancement not yet available").yellow()
+        ))?;
+    }
+
     Ok(())
 }
 
+#[allow(clippy::unused_async)] // Will use async when implemented
 async fn cmd_enhance(file: &str, dry_run: bool, output: Option<String>) -> Result<()> {
     debug!(
         "Enhance command: file={}, dry_run={}, output={:?}",
@@ -191,6 +303,7 @@ async fn cmd_enhance(file: &str, dry_run: bool, output: Option<String>) -> Resul
     Ok(())
 }
 
+#[allow(clippy::unused_async)] // Will use async when implemented
 async fn cmd_init(force: bool, skip_ai: bool) -> Result<()> {
     debug!("Init command: force={}, skip_ai={}", force, skip_ai);
 
@@ -202,6 +315,7 @@ async fn cmd_init(force: bool, skip_ai: bool) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::unused_async)] // Will use async when implemented
 async fn cmd_ai(action: AiAction) -> Result<()> {
     debug!("AI command: {:?}", action);
 

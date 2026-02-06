@@ -1,3 +1,3 @@
 mod generator;
 
-pub use generator::ChangelogGenerator;
+pub use generator::{ChangelogGenerator, GenerateOptions};

@@ -3,6 +3,8 @@
 //! These tests spawn the CLI as a subprocess to test environment variable loading
 //! without requiring unsafe code in the test process.
 
+#![expect(clippy::expect_used)] // Tests use expect for clearer failure messages
+
 use std::fs;
 use std::path::Path;
 use std::process::Command;
