@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2024"
 description = "Generate high-quality changelogs from conventional commits with AI enhancement"
 license = "MIT"
-repository = "https://github.com/yourusername/changelog-x"
+repository = "https://github.com/maikbasel/changelog-x"
+homepage = "https://github.com/maikbasel/changelog-x"
 
 [[bin]]
 name = "cgx"
@@ -73,3 +74,6 @@ expect_used = "warn"
 lto = true
 strip = true
 codegen-units = 1
+
+[profile.dist]
+inherits = "release"
