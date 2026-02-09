@@ -54,6 +54,28 @@ impl Provider {
         }
     }
 
+    /// Curated list of popular models for this provider.
+    /// The first entry is the recommended default.
+    #[must_use]
+    pub fn popular_models(&self) -> Vec<&'static str> {
+        match self {
+            Self::OpenAi => vec!["gpt-4o", "gpt-4o-mini", "o3-mini", "gpt-4-turbo"],
+            Self::Anthropic => vec![
+                "claude-sonnet-4-20250514",
+                "claude-haiku-4-5-20251001",
+                "claude-opus-4-6",
+            ],
+            Self::Gemini => vec!["gemini-2.0-flash", "gemini-2.5-pro", "gemini-2.5-flash"],
+            Self::Ollama => vec!["llama3.1", "llama3.2", "mistral", "codellama", "phi3"],
+            Self::Groq => vec![
+                "llama-3.3-70b-versatile",
+                "llama-3.1-8b-instant",
+                "mixtral-8x7b-32768",
+            ],
+            Self::DeepSeek => vec!["deepseek-chat", "deepseek-reasoner"],
+        }
+    }
+
     /// Whether this provider requires an API key
     #[must_use]
     pub const fn requires_api_key(&self) -> bool {

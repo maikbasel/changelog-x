@@ -440,8 +440,17 @@ fn cmd_ai_setup() -> Result<()> {
         Err(e) => return Err(e).context("Provider selection failed"),
     };
 
-    // Model input
-    let model = match ui::text_input("Model name:", Some(provider.default_model())) {
+    // Model input with suggestions from popular models
+    let suggestions: Vec<String> = provider
+        .popular_models()
+        .iter()
+        .map(|s| (*s).into())
+        .collect();
+    let model = match ui::text_input_with_suggestions(
+        "Model name:",
+        Some(provider.default_model()),
+        suggestions,
+    ) {
         Ok(m) => m,
         Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
             term.write_line(&format!("\n{}", style("Setup cancelled.").dim()))?;

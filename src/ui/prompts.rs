@@ -1,4 +1,4 @@
-use inquire::{Confirm, Password, Select, Text};
+use inquire::{Confirm, CustomUserError, Password, Select, Text};
 use std::fmt::Display;
 
 /// Prompt the user to confirm an action
@@ -29,6 +29,33 @@ pub fn select_option<T: Display>(
 /// Returns `InquireError` if the prompt fails or is cancelled.
 pub fn text_input(message: &str, default: Option<&str>) -> Result<String, inquire::InquireError> {
     let mut prompt = Text::new(message);
+    if let Some(default_value) = default {
+        prompt = prompt.with_default(default_value);
+    }
+    prompt.prompt()
+}
+
+/// Prompt the user for text input with suggestions from a predefined list.
+/// The user can pick a suggestion (Tab to complete) or type a custom value.
+///
+/// # Errors
+///
+/// Returns `InquireError` if the prompt fails or is cancelled.
+pub fn text_input_with_suggestions(
+    message: &str,
+    default: Option<&str>,
+    suggestions: Vec<String>,
+) -> Result<String, inquire::InquireError> {
+    let mut prompt = Text::new(message).with_autocomplete(
+        move |input: &str| -> Result<Vec<String>, CustomUserError> {
+            let lower = input.to_lowercase();
+            Ok(suggestions
+                .iter()
+                .filter(|s| s.to_lowercase().contains(&lower))
+                .cloned()
+                .collect())
+        },
+    );
     if let Some(default_value) = default {
         prompt = prompt.with_default(default_value);
     }
