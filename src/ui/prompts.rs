@@ -1,4 +1,4 @@
-use inquire::{Confirm, Select, Text};
+use inquire::{Confirm, Password, Select, Text};
 use std::fmt::Display;
 
 /// Prompt the user to confirm an action
@@ -33,4 +33,13 @@ pub fn text_input(message: &str, default: Option<&str>) -> Result<String, inquir
         prompt = prompt.with_default(default_value);
     }
     prompt.prompt()
+}
+
+/// Prompt the user for a password/secret input (masked)
+///
+/// # Errors
+///
+/// Returns `InquireError` if the prompt fails or is cancelled.
+pub fn password_input(message: &str) -> Result<String, inquire::InquireError> {
+    Password::new(message).without_confirmation().prompt()
 }

@@ -12,6 +12,9 @@ pub enum AppError {
     #[error("AI enhancement error: {0}")]
     Ai(#[from] AiError),
 
+    #[error("Credential error: {0}")]
+    Credential(#[from] CredentialError),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -99,6 +102,35 @@ impl ChangelogError {
     }
 }
 
+/// Credential storage and retrieval errors
+#[derive(Error, Debug)]
+pub enum CredentialError {
+    #[error("Failed to store credentials: {0}")]
+    Store(String),
+
+    #[error("Failed to retrieve credentials: {0}")]
+    Retrieve(String),
+
+    #[error("Failed to delete credentials: {0}")]
+    Delete(String),
+
+    #[error("No credentials found for provider '{0}'")]
+    NotFound(String),
+}
+
+impl CredentialError {
+    #[must_use]
+    pub const fn help_text(&self) -> Option<&str> {
+        match self {
+            Self::Retrieve(_) => Some("Run `cgx ai auth` to store a new API key"),
+            Self::NotFound(_) => Some("Run `cgx ai auth` to store an API key for this provider"),
+            Self::Store(_) | Self::Delete(_) => {
+                Some("Check that your system keyring is available and unlocked")
+            }
+        }
+    }
+}
+
 impl AiError {
     #[must_use]
     pub const fn help_text(&self) -> Option<&str> {
@@ -121,6 +153,7 @@ impl AppError {
             Self::Config(e) => e.help_text(),
             Self::Changelog(e) => e.help_text(),
             Self::Ai(e) => e.help_text(),
+            Self::Credential(e) => e.help_text(),
             Self::Io(_) => Some("Check file permissions and available disk space"),
         }
     }

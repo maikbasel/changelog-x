@@ -134,6 +134,49 @@ pub fn load_config(config_override: Option<&str>) -> Result<AppConfig, ConfigErr
         .map_err(|e| ConfigError::Parse(e.to_string()))
 }
 
+/// Save AI provider and model to the user config file.
+///
+/// Reads the existing config (or creates defaults), updates the `ai.provider`
+/// and `ai.model` fields, and writes back to `~/.config/cgx/config.toml`.
+///
+/// # Errors
+///
+/// Returns `ConfigError::Load` if the config file cannot be read or written.
+pub fn save_user_ai_config(provider: &str, model: &str) -> Result<(), ConfigError> {
+    let config_path = get_user_config_path().ok_or_else(|| {
+        ConfigError::Load("Unable to determine user config directory".to_string())
+    })?;
+
+    // Ensure parent directory exists
+    if let Some(parent) = config_path.parent()
+        && !parent.exists()
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| ConfigError::Load(format!("Failed to create config directory: {e}")))?;
+    }
+
+    // Read existing config or start from defaults
+    let mut app_config: AppConfig = if config_path.exists() {
+        let content = std::fs::read_to_string(&config_path)
+            .map_err(|e| ConfigError::Load(format!("Failed to read config: {e}")))?;
+        toml::from_str(&content).map_err(|e| ConfigError::Parse(e.to_string()))?
+    } else {
+        AppConfig::default()
+    };
+
+    // Update AI fields
+    app_config.ai.provider = Some(provider.to_string());
+    app_config.ai.model = Some(model.to_string());
+
+    // Write back
+    let toml_str =
+        toml::to_string_pretty(&app_config).map_err(|e| ConfigError::Parse(e.to_string()))?;
+    std::fs::write(&config_path, toml_str)
+        .map_err(|e| ConfigError::Load(format!("Failed to write config: {e}")))?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 #[expect(clippy::expect_used)]
 mod tests {

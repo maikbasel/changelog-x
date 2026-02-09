@@ -1,11 +1,12 @@
 use anyhow::{Context, Result};
+use changelog_x::ai::credentials::{self, Provider};
 use changelog_x::changelog::{ChangelogGenerator, GenerateOptions};
-use changelog_x::config::{get_user_config_path, load_config};
-use changelog_x::ui::Pipeline;
+use changelog_x::config::{get_user_config_path, load_config, save_user_ai_config};
+use changelog_x::ui::{self, Pipeline};
 use changelog_x::{AppError, ChangelogError};
 use clap::{Parser, Subcommand};
 use console::{Term, style};
-use inquire::Editor;
+use inquire::{Editor, InquireError};
 use std::fs;
 use std::path::Path;
 use tracing::debug;
@@ -98,9 +99,18 @@ enum AiAction {
     /// Show AI configuration status
     Status,
 
-    /// Configure AI provider and credentials
+    /// Configure AI provider, model, and credentials
     Setup,
 
+    /// Manage API key in system keyring
+    Auth {
+        #[command(subcommand)]
+        action: Option<AuthAction>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AuthAction {
     /// Remove API key from system keyring
     Clear,
 }
@@ -315,30 +325,261 @@ async fn cmd_init(force: bool, skip_ai: bool) -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::unused_async)] // Will use async when implemented
+#[allow(clippy::unused_async)]
 async fn cmd_ai(action: AiAction) -> Result<()> {
     debug!("AI command: {:?}", action);
 
-    let term = Term::stdout();
     match action {
-        AiAction::Status => {
+        AiAction::Status => cmd_ai_status(),
+        AiAction::Setup => cmd_ai_setup(),
+        AiAction::Auth { action } => match action {
+            None => cmd_ai_auth(),
+            Some(AuthAction::Clear) => cmd_ai_auth_clear(),
+        },
+    }
+}
+
+fn cmd_ai_status() -> Result<()> {
+    let term = Term::stdout();
+    let config = load_config(None).context("Failed to load configuration")?;
+
+    term.write_line(&format!("{}", style("AI Configuration").bold()))?;
+    term.write_line("")?;
+
+    if let Some(ref provider_name) = config.ai.provider {
+        let provider_display = Provider::from_config_str(provider_name)
+            .map_or_else(|| provider_name.clone(), |p| p.to_string());
+
+        term.write_line(&format!(
+            "  {} {}",
+            style("Provider:").cyan(),
+            provider_display
+        ))?;
+
+        let model_display = config.ai.model.as_deref().unwrap_or("(default)");
+        term.write_line(&format!(
+            "  {}    {}",
+            style("Model:").cyan(),
+            model_display
+        ))?;
+
+        let provider = Provider::from_config_str(provider_name);
+        if provider.is_some_and(|p| !p.requires_api_key()) {
             term.write_line(&format!(
-                "{}",
-                style("AI status not yet implemented").yellow()
+                "  {}  {}",
+                style("API key:").cyan(),
+                style("not required").dim()
+            ))?;
+        } else if credentials::has_api_key(provider_name) {
+            term.write_line(&format!(
+                "  {}  {}",
+                style("API key:").cyan(),
+                style("stored in system keyring").green()
+            ))?;
+        } else {
+            term.write_line(&format!(
+                "  {}  {}",
+                style("API key:").cyan(),
+                style("not set").red()
+            ))?;
+            term.write_line(&format!(
+                "\n  {} Run {} to store an API key",
+                style("hint:").yellow(),
+                style("cgx ai auth").cyan()
             ))?;
         }
-        AiAction::Setup => {
+    } else {
+        term.write_line(&format!(
+            "  {}",
+            style("No AI provider configured").yellow()
+        ))?;
+        term.write_line(&format!(
+            "\n  {} Run {} to set up AI",
+            style("hint:").yellow(),
+            style("cgx ai setup").cyan()
+        ))?;
+    }
+
+    term.write_line("")?;
+    Ok(())
+}
+
+fn cmd_ai_setup() -> Result<()> {
+    let term = Term::stdout();
+    let config = load_config(None).context("Failed to load configuration")?;
+
+    // If already configured, confirm overwrite
+    if config.ai.is_configured() {
+        let provider_name = config.ai.provider.as_deref().unwrap_or("unknown");
+        term.write_line(&format!(
+            "AI is already configured with provider: {}",
+            style(provider_name).cyan()
+        ))?;
+
+        match ui::confirm("Overwrite existing configuration?", false) {
+            Ok(true) => {}
+            Ok(false) => {
+                term.write_line(&format!("{}", style("Setup cancelled.").dim()))?;
+                return Ok(());
+            }
+            Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
+                term.write_line(&format!("\n{}", style("Setup cancelled.").dim()))?;
+                return Ok(());
+            }
+            Err(e) => return Err(e).context("Prompt failed"),
+        }
+    }
+
+    // Select provider
+    let provider = match ui::select_option("Select AI provider:", Provider::ALL.to_vec()) {
+        Ok(p) => p,
+        Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
+            term.write_line(&format!("\n{}", style("Setup cancelled.").dim()))?;
+            return Ok(());
+        }
+        Err(e) => return Err(e).context("Provider selection failed"),
+    };
+
+    // Model input
+    let model = match ui::text_input("Model name:", Some(provider.default_model())) {
+        Ok(m) => m,
+        Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
+            term.write_line(&format!("\n{}", style("Setup cancelled.").dim()))?;
+            return Ok(());
+        }
+        Err(e) => return Err(e).context("Model input failed"),
+    };
+
+    // API key (skip for Ollama)
+    if provider.requires_api_key() {
+        match ui::password_input(&format!("API key for {provider}:")) {
+            Ok(key) => {
+                credentials::store_api_key(&provider, &key)?;
+            }
+            Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
+                term.write_line(&format!("\n{}", style("Setup cancelled.").dim()))?;
+                return Ok(());
+            }
+            Err(e) => return Err(e).context("API key input failed"),
+        }
+    }
+
+    // Save provider + model to config
+    save_user_ai_config(provider.as_config_str(), &model)?;
+
+    // Print summary
+    term.write_line("")?;
+    term.write_line(&format!(
+        "{} AI configured successfully",
+        style("✓").green().bold()
+    ))?;
+    term.write_line(&format!("  {} {}", style("Provider:").cyan(), provider))?;
+    term.write_line(&format!("  {}    {}", style("Model:").cyan(), model))?;
+    if provider.requires_api_key() {
+        term.write_line(&format!(
+            "  {}  {}",
+            style("API key:").cyan(),
+            style("stored in system keyring").green()
+        ))?;
+    }
+    term.write_line("")?;
+
+    Ok(())
+}
+
+fn cmd_ai_auth() -> Result<()> {
+    let term = Term::stdout();
+    let config = load_config(None).context("Failed to load configuration")?;
+
+    let provider_name = config
+        .ai
+        .provider
+        .as_deref()
+        .ok_or(AppError::Ai(changelog_x::AiError::NotConfigured))?;
+
+    let provider = Provider::from_config_str(provider_name);
+
+    if provider.is_some_and(|p| !p.requires_api_key()) {
+        term.write_line(&format!(
+            "{} {} does not require an API key",
+            style("note:").yellow(),
+            provider.map_or_else(|| provider_name.to_string(), |p| p.to_string())
+        ))?;
+        return Ok(());
+    }
+
+    let display_name = provider.map_or_else(|| provider_name.to_string(), |p| p.to_string());
+
+    match ui::password_input(&format!("API key for {display_name}:")) {
+        Ok(key) => {
+            if let Some(p) = provider {
+                credentials::store_api_key(&p, &key)?;
+            } else {
+                // Unknown provider — store using raw config string
+                let entry = keyring::Entry::new("cgx", provider_name)
+                    .map_err(|e| changelog_x::CredentialError::Store(e.to_string()))?;
+                entry
+                    .set_password(&key)
+                    .map_err(|e| changelog_x::CredentialError::Store(e.to_string()))?;
+            }
+        }
+        Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
+            term.write_line(&format!("\n{}", style("Cancelled.").dim()))?;
+            return Ok(());
+        }
+        Err(e) => return Err(e).context("API key input failed"),
+    }
+
+    term.write_line(&format!(
+        "\n{} API key stored for {}",
+        style("✓").green().bold(),
+        style(display_name).cyan()
+    ))?;
+
+    Ok(())
+}
+
+fn cmd_ai_auth_clear() -> Result<()> {
+    let term = Term::stdout();
+    let config = load_config(None).context("Failed to load configuration")?;
+
+    let provider_name = config
+        .ai
+        .provider
+        .as_deref()
+        .ok_or(AppError::Ai(changelog_x::AiError::NotConfigured))?;
+
+    if !credentials::has_api_key(provider_name) {
+        term.write_line(&format!(
+            "{} No API key stored for {}",
+            style("note:").yellow(),
+            style(provider_name).cyan()
+        ))?;
+        return Ok(());
+    }
+
+    let display_name = Provider::from_config_str(provider_name)
+        .map_or_else(|| provider_name.to_string(), |p| p.to_string());
+
+    match ui::confirm(
+        &format!("Remove API key for {display_name} from system keyring?"),
+        false,
+    ) {
+        Ok(true) => {
+            credentials::delete_api_key(provider_name)?;
             term.write_line(&format!(
-                "{}",
-                style("AI setup not yet implemented").yellow()
+                "{} API key removed for {}",
+                style("✓").green().bold(),
+                style(display_name).cyan()
             ))?;
         }
-        AiAction::Clear => {
-            term.write_line(&format!(
-                "{}",
-                style("AI clear not yet implemented").yellow()
-            ))?;
+        Ok(false) => {
+            term.write_line(&format!("{}", style("Cancelled.").dim()))?;
         }
+        Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
+            term.write_line(&format!("\n{}", style("Cancelled.").dim()))?;
+        }
+        Err(e) => return Err(e).context("Confirmation failed"),
     }
 
     Ok(())
