@@ -1,3 +1,3 @@
 mod generator;
 
-pub use generator::{ChangelogGenerator, GenerateOptions};
+pub use generator::{ChangelogGenerator, GenerateOptions, GenerateResult, read_commit_summaries};

@@ -17,6 +17,19 @@ pub struct AppConfig {
     pub ai: AiConfig,
 }
 
+/// Changelog output format
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub enum ChangelogFormat {
+    /// Keep a Changelog 1.1.0 — Added, Changed, Deprecated, Removed, Fixed, Security
+    #[default]
+    #[serde(rename = "keep-a-changelog")]
+    KeepAChangelog,
+
+    /// Common Changelog — Changed, Added, Removed, Fixed
+    #[serde(rename = "common-changelog")]
+    CommonChangelog,
+}
+
 /// Changelog generation configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChangelogConfig {
@@ -27,6 +40,10 @@ pub struct ChangelogConfig {
     /// Tag pattern for version matching
     #[serde(default)]
     pub tag_pattern: Option<String>,
+
+    /// Output format (default: keep-a-changelog)
+    #[serde(default)]
+    pub format: ChangelogFormat,
 }
 
 impl Default for ChangelogConfig {
@@ -34,6 +51,7 @@ impl Default for ChangelogConfig {
         Self {
             output: default_output(),
             tag_pattern: None,
+            format: ChangelogFormat::default(),
         }
     }
 }
@@ -209,6 +227,7 @@ mod tests {
         let config = ChangelogConfig::default();
         assert_eq!(config.output, "CHANGELOG.md");
         assert_eq!(config.tag_pattern, None);
+        assert_eq!(config.format, ChangelogFormat::KeepAChangelog);
     }
 
     #[test]
@@ -262,6 +281,7 @@ mod tests {
             changelog: ChangelogConfig {
                 output: "HISTORY.md".to_string(),
                 tag_pattern: Some("release-*".to_string()),
+                format: ChangelogFormat::default(),
             },
             ai: AiConfig {
                 provider: Some("gemini".to_string()),

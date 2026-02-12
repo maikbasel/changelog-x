@@ -14,6 +14,7 @@ use git_cliff_core::tag::Tag;
 use indexmap::IndexMap;
 use regex::Regex;
 
+use crate::ai::context::CommitSummary;
 use crate::config::ChangelogConfig;
 use crate::error::ChangelogError;
 
@@ -26,6 +27,12 @@ pub struct GenerateOptions {
     pub to_tag: Option<String>,
     /// Generate changelog for unreleased commits only (since latest tag)
     pub unreleased: bool,
+}
+
+/// Result of changelog generation, containing both the rendered text and commit metadata.
+pub struct GenerateResult {
+    pub changelog: String,
+    pub commits: Vec<CommitSummary>,
 }
 
 /// Generates changelogs from conventional commits using git-cliff
@@ -51,7 +58,7 @@ impl ChangelogGenerator {
         &self,
         options: &GenerateOptions,
         on_step: Option<&dyn Fn()>,
-    ) -> Result<String, ChangelogError> {
+    ) -> Result<GenerateResult, ChangelogError> {
         let step = || {
             if let Some(cb) = &on_step {
                 cb();
@@ -102,6 +109,9 @@ impl ChangelogGenerator {
             return Err(ChangelogError::NoCommits);
         }
 
+        // Extract owned commit summaries before git-cliff consumes them
+        let summaries = extract_commit_summaries(&commits);
+
         let tags = repo
             .tags(&tag_pattern, false, false)
             .map_err(|e| ChangelogError::Repository(format!("Failed to fetch tags: {e}")))?;
@@ -126,8 +136,13 @@ impl ChangelogGenerator {
             ChangelogError::Generation(format!("Failed to generate changelog: {e}"))
         })?;
 
-        String::from_utf8(output)
-            .map_err(|e| ChangelogError::Generation(format!("Invalid UTF-8 in output: {e}")))
+        let text = String::from_utf8(output)
+            .map_err(|e| ChangelogError::Generation(format!("Invalid UTF-8 in output: {e}")))?;
+
+        Ok(GenerateResult {
+            changelog: text,
+            commits: summaries,
+        })
     }
 
     /// Resolve `--unreleased` into concrete `GenerateOptions` by finding the latest tag.
@@ -374,6 +389,52 @@ impl ChangelogGenerator {
             },
         ]
     }
+}
+
+/// Extract `CommitSummary` values from git2 commits (owned, no lifetime ties).
+fn extract_commit_summaries(commits: &[git2::Commit<'_>]) -> Vec<CommitSummary> {
+    commits
+        .iter()
+        .map(|c| {
+            let full_message = c.message().unwrap_or_default();
+            let summary = c.summary().unwrap_or_default().to_string();
+            let body = full_message
+                .strip_prefix(c.summary().unwrap_or_default())
+                .map(str::trim)
+                .filter(|b| !b.is_empty())
+                .map(String::from);
+
+            CommitSummary {
+                short_hash: c.id().to_string().get(..7).unwrap_or_default().to_string(),
+                summary,
+                body,
+                author: c.author().name().unwrap_or_default().to_string(),
+            }
+        })
+        .collect()
+}
+
+/// Read commit summaries from the git repository in the current directory.
+///
+/// Returns up to `limit` commits. Returns an empty `Vec` on any error (best-effort).
+#[must_use]
+pub fn read_commit_summaries(limit: usize) -> Vec<CommitSummary> {
+    let Ok(repo_path) = env::current_dir() else {
+        return Vec::new();
+    };
+
+    let Ok(repo) = Repository::init(repo_path) else {
+        return Vec::new();
+    };
+
+    let Ok(commits) = repo.commits(None, None, None, false) else {
+        return Vec::new();
+    };
+
+    extract_commit_summaries(&commits)
+        .into_iter()
+        .take(limit)
+        .collect()
 }
 
 #[cfg(test)]

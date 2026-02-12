@@ -76,6 +76,34 @@ impl Provider {
         }
     }
 
+    /// Standard environment variable name for this provider's API key.
+    ///
+    /// Returns `None` for providers that don't require an API key (e.g. Ollama).
+    #[must_use]
+    pub const fn env_var_name(&self) -> Option<&str> {
+        match self {
+            Self::OpenAi => Some("OPENAI_API_KEY"),
+            Self::Anthropic => Some("ANTHROPIC_API_KEY"),
+            Self::Gemini => Some("GEMINI_API_KEY"),
+            Self::Groq => Some("GROQ_API_KEY"),
+            Self::DeepSeek => Some("DEEPSEEK_API_KEY"),
+            Self::Ollama => None,
+        }
+    }
+
+    /// The genai adapter namespace string used to construct model identifiers.
+    #[must_use]
+    pub const fn as_genai_adapter(&self) -> &str {
+        match self {
+            Self::OpenAi => "openai",
+            Self::Anthropic => "anthropic",
+            Self::Gemini => "gemini",
+            Self::Ollama => "ollama",
+            Self::Groq => "groq",
+            Self::DeepSeek => "deepseek",
+        }
+    }
+
     /// Whether this provider requires an API key
     #[must_use]
     pub const fn requires_api_key(&self) -> bool {
@@ -207,5 +235,28 @@ mod tests {
         for provider in Provider::ALL {
             assert!(!provider.default_model().is_empty());
         }
+    }
+
+    #[test]
+    fn test_provider_env_var_name() {
+        assert_eq!(Provider::OpenAi.env_var_name(), Some("OPENAI_API_KEY"));
+        assert_eq!(
+            Provider::Anthropic.env_var_name(),
+            Some("ANTHROPIC_API_KEY")
+        );
+        assert_eq!(Provider::Gemini.env_var_name(), Some("GEMINI_API_KEY"));
+        assert_eq!(Provider::Groq.env_var_name(), Some("GROQ_API_KEY"));
+        assert_eq!(Provider::DeepSeek.env_var_name(), Some("DEEPSEEK_API_KEY"));
+        assert_eq!(Provider::Ollama.env_var_name(), None);
+    }
+
+    #[test]
+    fn test_provider_as_genai_adapter() {
+        assert_eq!(Provider::OpenAi.as_genai_adapter(), "openai");
+        assert_eq!(Provider::Anthropic.as_genai_adapter(), "anthropic");
+        assert_eq!(Provider::Gemini.as_genai_adapter(), "gemini");
+        assert_eq!(Provider::Ollama.as_genai_adapter(), "ollama");
+        assert_eq!(Provider::Groq.as_genai_adapter(), "groq");
+        assert_eq!(Provider::DeepSeek.as_genai_adapter(), "deepseek");
     }
 }

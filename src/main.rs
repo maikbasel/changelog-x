@@ -1,7 +1,10 @@
 use anyhow::{Context, Result};
+use changelog_x::ai::AiEnhancer;
 use changelog_x::ai::credentials::{self, Provider};
-use changelog_x::changelog::{ChangelogGenerator, GenerateOptions};
-use changelog_x::config::{get_user_config_path, load_config, save_user_ai_config};
+use changelog_x::changelog::{ChangelogGenerator, GenerateOptions, read_commit_summaries};
+use changelog_x::config::{
+    ChangelogFormat, get_user_config_path, load_config, save_user_ai_config,
+};
 use changelog_x::ui::{self, Pipeline};
 use changelog_x::{AppError, ChangelogError};
 use clap::{Parser, Subcommand};
@@ -53,13 +56,17 @@ enum Commands {
         /// Generate changelog for unreleased commits only (since latest tag)
         #[arg(long, conflicts_with_all = ["from", "to"])]
         unreleased: bool,
+
+        /// Changelog format: keep-a-changelog or common-changelog
+        #[arg(long)]
+        format: Option<String>,
     },
 
     /// Enhance an existing changelog file with AI
+    #[command(arg_required_else_help = true)]
     Enhance {
         /// File to enhance
-        #[arg(default_value = "CHANGELOG.md")]
-        file: String,
+        file: Option<String>,
 
         /// Print result without overwriting file
         #[arg(long)]
@@ -68,6 +75,10 @@ enum Commands {
         /// Write to different file instead of overwriting
         #[arg(short, long)]
         output: Option<String>,
+
+        /// Changelog format: keep-a-changelog or common-changelog
+        #[arg(long)]
+        format: Option<String>,
     },
 
     /// Initialize cgx in the current project
@@ -179,13 +190,18 @@ async fn run() -> Result<()> {
             from,
             to,
             unreleased,
-        }) => cmd_generate(ai, stdout, &output, from, to, unreleased).await,
+            format,
+        }) => cmd_generate(ai, stdout, &output, from, to, unreleased, format).await,
 
         Some(Commands::Enhance {
             file,
             dry_run,
             output,
-        }) => cmd_enhance(&file, dry_run, output).await,
+            format,
+        }) => {
+            let file = file.unwrap_or_else(|| "CHANGELOG.md".into());
+            cmd_enhance(&file, dry_run, output, format).await
+        }
 
         Some(Commands::Init { force, skip_ai }) => cmd_init(force, skip_ai).await,
 
@@ -202,7 +218,23 @@ async fn run() -> Result<()> {
     }
 }
 
-#[allow(clippy::unused_async)] // Will use async when AI enhancement is implemented
+/// Resolve the effective changelog format: CLI flag overrides config default.
+fn resolve_format(
+    cli_format: Option<&str>,
+    config_format: &ChangelogFormat,
+) -> Result<ChangelogFormat> {
+    cli_format.map_or_else(
+        || Ok(config_format.clone()),
+        |f| match f {
+            "keep-a-changelog" => Ok(ChangelogFormat::KeepAChangelog),
+            "common-changelog" => Ok(ChangelogFormat::CommonChangelog),
+            other => anyhow::bail!(
+                "Unknown format '{other}'. Valid values: keep-a-changelog, common-changelog"
+            ),
+        },
+    )
+}
+
 async fn cmd_generate(
     ai: bool,
     stdout: bool,
@@ -210,6 +242,7 @@ async fn cmd_generate(
     from: Option<String>,
     to: Option<String>,
     unreleased: bool,
+    format_flag: Option<String>,
 ) -> Result<()> {
     debug!(
         "Generate command: ai={}, stdout={}, output={}, from={:?}, to={:?}, unreleased={}",
@@ -218,14 +251,19 @@ async fn cmd_generate(
 
     let term = Term::stdout();
 
-    let pipeline = Pipeline::new(&[
+    let mut steps: Vec<&str> = vec![
         "Loading configuration",
         "Initializing repository",
         "Resolving commits",
         "Fetching data",
         "Building releases",
         "Generating changelog",
-    ]);
+    ];
+    if ai {
+        steps.push("Enhancing with AI");
+    }
+
+    let pipeline = Pipeline::new(&steps);
 
     // Step 1: Loading configuration
     pipeline.advance();
@@ -239,10 +277,12 @@ async fn cmd_generate(
         unreleased,
     };
 
-    let changelog = match generator.generate(&options, Some(&|| pipeline.advance())) {
-        Ok(content) => {
-            pipeline.finish_all();
-            content
+    let generate_result = match generator.generate(&options, Some(&|| pipeline.advance())) {
+        Ok(result) => {
+            if !ai {
+                pipeline.finish_all();
+            }
+            result
         }
         Err(ChangelogError::NoCommits) => {
             pipeline.fail("No conventional commits found");
@@ -266,6 +306,30 @@ async fn cmd_generate(
         }
     };
 
+    let mut changelog = generate_result.changelog;
+
+    // AI enhancement (if --ai flag)
+    if ai {
+        pipeline.advance();
+        let fmt = resolve_format(format_flag.as_deref(), &config.changelog.format)?;
+        let ai_enhancer = AiEnhancer::new(config.ai.clone());
+        let context = if generate_result.commits.is_empty() {
+            None
+        } else {
+            Some(generate_result.commits.as_slice())
+        };
+        match ai_enhancer.enhance(&changelog, context, &fmt).await {
+            Ok(result) => {
+                changelog = result;
+                pipeline.finish_all();
+            }
+            Err(e) => {
+                pipeline.fail(&format!("{e}"));
+                return Err(e).context("AI enhancement failed");
+            }
+        }
+    }
+
     // Output: stdout or file
     if stdout {
         term.write_line(&changelog)?;
@@ -287,29 +351,76 @@ async fn cmd_generate(
         ))?;
     }
 
-    // AI enhancement (if --ai flag)
-    if ai {
-        term.write_line(&format!(
-            "{}",
-            style("AI enhancement not yet available").yellow()
-        ))?;
-    }
-
     Ok(())
 }
 
-#[allow(clippy::unused_async)] // Will use async when implemented
-async fn cmd_enhance(file: &str, dry_run: bool, output: Option<String>) -> Result<()> {
+async fn cmd_enhance(
+    file: &str,
+    dry_run: bool,
+    output: Option<String>,
+    format_flag: Option<String>,
+) -> Result<()> {
     debug!(
         "Enhance command: file={}, dry_run={}, output={:?}",
         file, dry_run, output
     );
 
     let term = Term::stdout();
-    term.write_line(&format!(
-        "{}",
-        style("AI enhancement not yet implemented").yellow()
-    ))?;
+
+    let pipeline = Pipeline::new(&[
+        "Loading configuration",
+        "Reading file",
+        "Reading git history",
+        "Enhancing with AI",
+    ]);
+
+    // Step 1: Load config
+    pipeline.advance();
+    let config = load_config(None).context("Failed to load configuration")?;
+    let fmt = resolve_format(format_flag.as_deref(), &config.changelog.format)?;
+
+    // Step 2: Read the input file
+    pipeline.advance();
+    let content = fs::read_to_string(file).with_context(|| format!("Failed to read {file}"))?;
+
+    // Step 3: Read git history (best-effort)
+    pipeline.advance();
+    let summaries = read_commit_summaries(500);
+    let commit_ctx = if summaries.is_empty() {
+        None
+    } else {
+        Some(summaries.as_slice())
+    };
+
+    // Step 4: Enhance with AI
+    pipeline.advance();
+    let ai_enhancer = AiEnhancer::new(config.ai.clone());
+    let result = match ai_enhancer.enhance(&content, commit_ctx, &fmt).await {
+        Ok(text) => {
+            pipeline.finish_all();
+            text
+        }
+        Err(e) => {
+            pipeline.fail(&format!("{e}"));
+            return Err(e).context("AI enhancement failed");
+        }
+    };
+
+    // Output
+    if dry_run {
+        term.write_line(&result)?;
+    } else {
+        let output_path = output.as_deref().unwrap_or(file);
+        fs::write(output_path, &result)
+            .with_context(|| format!("Failed to write to {output_path}"))?;
+
+        term.write_line(&format!(
+            "{} Enhanced changelog written to {}",
+            style("✓").green().bold(),
+            style(output_path).cyan()
+        ))?;
+    }
+
     Ok(())
 }
 

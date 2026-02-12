@@ -131,6 +131,23 @@ impl CredentialError {
     }
 }
 
+impl From<genai::Error> for AiError {
+    fn from(err: genai::Error) -> Self {
+        match &err {
+            genai::Error::RequiresApiKey { .. }
+            | genai::Error::NoAuthResolver { .. }
+            | genai::Error::NoAuthData { .. } => Self::NotConfigured,
+            genai::Error::WebModelCall { .. } | genai::Error::WebAdapterCall { .. } => {
+                Self::Connection(err.to_string())
+            }
+            genai::Error::NoChatResponse { .. }
+            | genai::Error::InvalidJsonResponseElement { .. }
+            | genai::Error::StreamParse { .. } => Self::InvalidResponse(err.to_string()),
+            _ => Self::Request(err.to_string()),
+        }
+    }
+}
+
 impl AiError {
     #[must_use]
     pub const fn help_text(&self) -> Option<&str> {
