@@ -6,10 +6,13 @@ use serde::{Deserialize, Serialize};
 use tera::{Context, Tera};
 use tracing::debug;
 
-use crate::ai::context::{self, CommitSummary};
+use crate::ai::context::ProjectContext;
 use crate::ai::credentials::{self, Provider};
 use crate::config::{AiConfig, ChangelogFormat};
 use crate::error::AiError;
+
+/// Default sampling temperature when not set in config.
+const DEFAULT_TEMPERATURE: f64 = 0.3;
 
 // ---------------------------------------------------------------------------
 // Structured AI output types
@@ -233,11 +236,72 @@ fn normalize_changelog(
 // System prompt
 // ---------------------------------------------------------------------------
 
-fn build_system_prompt(schema_json: &str) -> String {
+/// Base system prompt for Step 1: commit analysis and reasoning.
+const ANALYSIS_PROMPT_BASE: &str = "\
+You are a senior software engineer analyzing git commits for a changelog.
+
+Given raw changelog entries, produce a structured analysis covering:
+
+1. USER-FACING CHANGES — List every change that matters to end-users or developers \
+consuming this project. For each, note the relevant changelog entry and why it matters.
+
+2. GROUPING — Identify commits that belong to the same feature or fix. List each group \
+with its member entries and the single theme that unifies them.
+
+3. BREAKING CHANGES & SECURITY — Flag any breaking changes or security fixes explicitly. \
+Quote the relevant entries.
+
+4. NOISE TO FILTER — List entries that should be dropped from the final changelog:
+   - CI/CD (GitHub Actions, GitLab CI, workflows, release pipelines, PAT tokens)
+   - Infrastructure (Docker, Kubernetes, Terraform, Helm, Nginx, Coolify, compose)
+   - Dependency bumps (lockfile updates, \"bump X from Y to Z\", dependency groups)
+   - Dev tooling (linting config, pre-commit hooks, editor settings, formatting)
+   - Repository housekeeping (release workflows, branch policies, migration scripts)
+   - Project scaffolding (initial skeleton setup, boilerplate, \"init\" commits)
+   - Entries with conventional-commit scope ci, cd, deps, build, init, or docker — \
+regardless of type or section. A fix(ci) is NOT a bug fix. A feat(init) is NOT a feature.
+
+Write your analysis as plain text. Be thorough but concise.";
+
+/// Build the analysis system prompt, optionally prepending project identity.
+fn build_analysis_prompt(project: Option<&ProjectContext>) -> String {
+    use std::fmt::Write;
+
+    let mut prompt = String::new();
+    if let Some(ctx) = project {
+        let _ = write!(
+            prompt,
+            "You are analyzing changes for \"{}\", {}. This is a {}.\n\n",
+            ctx.name,
+            ctx.description.as_deref().unwrap_or("a software project"),
+            ctx.project_type,
+        );
+    }
+    prompt.push_str(ANALYSIS_PROMPT_BASE);
+    prompt
+}
+
+/// System prompt for Step 2: changelog writing with JSON output.
+fn build_writing_prompt(schema_json: &str, project: Option<&ProjectContext>) -> String {
+    let identity = project.map_or_else(String::new, |ctx| {
+        format!(
+            "You are writing a changelog for \"{}\", {}. This is a {}.\n\n",
+            ctx.name,
+            ctx.description.as_deref().unwrap_or("a software project"),
+            ctx.project_type,
+        )
+    });
+
     format!(
         "\
-You are a technical writer producing concise, developer-facing changelogs. You receive \
-raw changelog entries from git-cliff and return clean, structured JSON.
+{identity}You are an expert technical writer producing polished, user-facing changelogs.
+
+You receive two inputs:
+1. The original raw changelog entries.
+2. An analysis from a senior engineer identifying user-facing changes, groupings, \
+noise to filter, and breaking/security items.
+
+Your job is to transform these into a clean, structured JSON changelog.
 
 <rules>
 RELEASE STRUCTURE
@@ -246,93 +310,38 @@ RELEASE STRUCTURE
 - Never invent, rename, merge, or remove release headings.
 - Never add releases that do not exist in the input.
 
-FILTER (critical — apply before all other steps)
-Delete these entries completely. They must NOT appear in the output in any form — do not \
-rewrite them, do not reclassify them, do not move them to another section. Drop them:
-- CI/CD: GitHub Actions, GitLab CI, Jenkins, workflows, release pipelines, PAT tokens.
-- Infrastructure: Docker, Kubernetes, Terraform, Helm, Nginx, Coolify, compose files.
-- Dependency bumps: lockfile updates, \"bump X from Y to Z\", dependency group updates, \
-audit deps. This includes entries in a \"Dependencies\" section.
-- Dev tooling: linting config, pre-commit hooks, editor settings, formatting config, \
-coding guidelines, test configuration.
-- Repository housekeeping: release workflows, branch policies, migration scripts.
-- Project scaffolding: initial skeleton setup, boilerplate generation, \"init\" commits.
-- Entries whose conventional-commit scope is ci, cd, deps, build, init, or docker — \
-regardless of the commit type or the section git-cliff placed them in (including \
-fix(ci):, feat(ci):, chore(deps):, feat(init):). \
-A \"Bug Fix\" with scope ci is NOT a bug fix — drop it. \
-A \"Feature\" with scope init is NOT a feature — drop it.
-When a GIT COMMIT CONTEXT section is provided, cross-reference commit scopes to confirm \
-filtering decisions.
-
-MERGE RELATED ENTRIES
-Combine commits that contribute to the same feature or bug fix into one entry:
-- Multiple WIP commits for one feature → one final entry describing the completed feature.
-- Incremental improvements to the same area → one entry covering the end result.
-- A feature commit plus its tracing/logging/test commits → one entry about the feature.
+REWRITING RULES
+- Merge aggressively: combine related commits identified in the analysis into single entries.
+- Write for users, not developers. Describe what changed from the user's perspective.
+- Use imperative present tense: Add, Fix, Improve, Remove, Update, Deprecate.
+- Drop all noise identified in the analysis. These entries must NOT appear in any form.
+- Elevate breaking changes: prefix with **BREAKING:** in the entry text.
+- Elevate security fixes: ensure they land in the Security section.
+- Add context when the raw entry is cryptic — make it understandable without reading code.
+- Preserve precision: do not lose specific details (version numbers, flag names, API changes).
 
 CLASSIFY (Keep a Changelog sections)
-Map remaining entries to exactly one of: Added, Changed, Deprecated, Removed, Fixed, Security.
+Map entries to exactly one of: Added, Changed, Deprecated, Removed, Fixed, Security.
 - New capabilities → Added
 - Modifications to existing behavior, refactoring, performance → Changed
 - Deprecated features → Deprecated
 - Removed features → Removed
 - Bug fixes → Fixed
 - Security patches → Security
-Only include sections that have at least one entry after filtering. \
-If filtering removes all entries in a section, omit that section entirely. \
-Never output a section with an empty entries array.
+Only include sections with at least one entry. Never output an empty entries array.
 
 WRITE EACH ENTRY
 - One short sentence, at most 15 words.
-- Start with an imperative verb: Add, Fix, Improve, Remove, Update, Deprecate.
-- Prefix every entry with a bold scope inferred from its content: **ai:**, **ui:**, \
-**config:**, **backend:**, **frontend:**, **api:**, **core:**, etc.
+- Prefix every entry with a bold scope: **ai:**, **ui:**, **config:**, **core:**, etc.
 - Use **core:** for general or project-wide changes.
 - No file paths, function names, or internal implementation details.
 - Preserve PR/issue references (#123) and author attributions when present.
-- No markdown formatting inside entries except the bold scope prefix.
+- No markdown formatting inside entries except the bold scope prefix and BREAKING: prefix.
+
+TONE & STYLE
+- Clear, direct, professional. Consistent voice throughout.
+- No filler words, no hype, no marketing language.
 </rules>
-
-<example>
-INPUT:
-## [Unreleased]
-
-### Bug Fixes
-- **ci:** Downgrade GitHub Actions versions to match cargo-dist v0.30.3
-
-### Dependencies
-- Bump the rust-dependencies group with 5 updates
-
-### Features
-- **ai:** Add model suggestions with autocomplete to setup prompt
-- **ai:** Implement setup, status, and auth subcommands for AI configuration
-- Add progress pipeline UI and unreleased flag conflict tests
-- Implement config subcommands
-- **init:** Setup project skeleton
-
-### Miscellaneous Tasks
-- Add PAT to release please workflow
-- Create release workflow
-
-OUTPUT:
-{{{{
-  \"releases\": [
-    {{{{
-      \"heading\": \"[Unreleased]\",
-      \"sections\": [
-        {{{{
-          \"name\": \"Added\",
-          \"entries\": [
-            \"**ai:** Add setup, status, and auth subcommands with model autocomplete\",
-            \"**ui:** Add progress pipeline and config subcommands\"
-          ]
-        }}}}
-      ]
-    }}}}
-  ]
-}}}}
-</example>
 
 JSON SCHEMA:
 {schema_json}
@@ -340,12 +349,6 @@ JSON SCHEMA:
 Return ONLY valid JSON matching the schema. No commentary, no explanation, no code fences."
     )
 }
-
-const CONTEXT_ADDENDUM: &str = "\n\n\
-A GIT COMMIT CONTEXT section is appended to the user message. Use it to understand \
-the intent behind entries and to confirm filtering decisions. If a commit scope is \
-ci, cd, deps, build, or docker, drop the corresponding changelog entry. \
-Do not include commit context in the JSON output.";
 
 // ---------------------------------------------------------------------------
 // AiEnhancer
@@ -369,21 +372,31 @@ impl AiEnhancer {
         self.config.is_configured()
     }
 
-    /// Enhance the changelog content using AI
+    /// Enhance the changelog using a two-step AI pipeline.
     ///
-    /// The AI returns structured JSON which is parsed and rendered to markdown
-    /// using the specified changelog format.
+    /// **Step 1 — Analysis:** A senior-engineer persona reasons about the raw
+    /// changelog and commit context, producing a plain-text analysis of
+    /// user-facing changes, groupings, noise, and breaking/security items.
+    ///
+    /// **Step 2 — Writing:** A technical-writer persona transforms the original
+    /// changelog + the analysis into structured JSON (`EnhancedChangelog`).
+    ///
+    /// Both steps reuse the same `Client` and auth resolver. An optional
+    /// `on_step_completed` callback fires between the two calls so callers
+    /// can advance a progress indicator.
     ///
     /// # Errors
     ///
     /// Returns `AiError::NotConfigured` if no AI provider is configured.
     /// Returns `AiError::Connection` if the provider cannot be reached.
     /// Returns `AiError::InvalidResponse` if the AI returns unparseable output.
+    #[allow(clippy::future_not_send)]
     pub async fn enhance(
         &self,
         changelog: &str,
-        commit_context: Option<&[CommitSummary]>,
+        project_context: Option<&ProjectContext>,
         format: &ChangelogFormat,
+        on_step_completed: Option<&(dyn Fn() + Send + Sync)>,
     ) -> Result<String, AiError> {
         let provider_name = self
             .config
@@ -400,108 +413,112 @@ impl AiEnhancer {
             .as_deref()
             .unwrap_or_else(|| provider.default_model());
 
+        let temperature = self.config.temperature.unwrap_or(DEFAULT_TEMPERATURE);
+
         debug!(
             provider = provider_name,
             model = model_name,
-            "Starting AI enhancement"
+            temperature = temperature,
+            "Starting two-step AI enhancement"
         );
 
-        // Generate JSON schema for the response format
-        let schema = schemars::schema_for!(EnhancedChangelog);
-        let schema_json = serde_json::to_string_pretty(&schema).unwrap_or_default();
-
-        // Build auth resolver: env var first, then keyring fallback
+        // Shared client setup
         let auth_resolver = build_auth_resolver(provider);
-
         let client = Client::builder().with_auth_resolver(auth_resolver).build();
-
         let model_iden = format!("{}::{}", provider.as_genai_adapter(), model_name);
 
-        // Build system prompt — embed schema and append context addendum when commits provided
-        let has_context = commit_context.is_some_and(|c| !c.is_empty());
-        let commit_count = commit_context.map_or(0, <[CommitSummary]>::len);
-        let system_prompt = if has_context {
-            format!("{}{CONTEXT_ADDENDUM}", build_system_prompt(&schema_json))
-        } else {
-            build_system_prompt(&schema_json)
-        };
+        // Build the changelog user message
+        let changelog_message = format!("<changelog>\n{changelog}\n</changelog>");
+
+        // -- Step 1: Analysis (plain text) ------------------------------------
+        let analysis_system = build_analysis_prompt(project_context);
+
+        let analysis_options = ChatOptions::default().with_temperature(temperature);
+
+        let analysis_req = ChatRequest::default()
+            .with_system(analysis_system)
+            .append_message(ChatMessage::user(&changelog_message));
+
+        debug!(model_iden = model_iden, "Sending analysis request (step 1)");
+
+        let analysis_response = client
+            .exec_chat(&model_iden, analysis_req, Some(&analysis_options))
+            .await?;
+
+        let analysis_text = extract_response_text(analysis_response, "analysis")?;
 
         debug!(
-            system_prompt_len = system_prompt.len(),
-            has_commit_context = has_context,
-            commit_count = commit_count,
-            "Built system prompt"
+            analysis_len = analysis_text.len(),
+            "Received analysis (step 1)"
         );
 
-        // Build user message — wrap changelog in tags, append commit history
-        let user_message = commit_context.filter(|c| !c.is_empty()).map_or_else(
-            || format!("<changelog>\n{changelog}\n</changelog>"),
-            |commits| {
-                let mut msg = format!("<changelog>\n{changelog}\n</changelog>");
-                msg.push_str(&context::format_commit_context(commits));
-                msg
-            },
-        );
+        // Notify caller that step 1 is done (advance progress)
+        if let Some(cb) = on_step_completed {
+            cb();
+        }
 
-        debug!(
-            changelog_len = changelog.len(),
-            user_message_len = user_message.len(),
-            "Built user message"
-        );
+        // -- Step 2: Writing (JSON) -------------------------------------------
+        let schema = schemars::schema_for!(EnhancedChangelog);
+        let schema_json = serde_json::to_string_pretty(&schema).unwrap_or_default();
+        let writing_system = build_writing_prompt(&schema_json, project_context);
 
-        // Build chat options with JSON schema response format
         let schema_value: serde_json::Value = serde_json::to_value(&schema)
             .map_err(|e| AiError::Request(format!("Failed to serialize schema: {e}")))?;
 
         let json_spec = JsonSpec::new("enhanced_changelog", schema_value);
-        let chat_options = ChatOptions::default().with_response_format(json_spec);
+        let writing_options = ChatOptions::default()
+            .with_temperature(temperature)
+            .with_response_format(json_spec);
 
-        let chat_req = ChatRequest::default()
-            .with_system(system_prompt)
-            .append_message(ChatMessage::user(user_message));
-
-        debug!(
-            model_iden = model_iden,
-            has_context = has_context,
-            "Sending chat request"
+        // User message: original changelog + analysis
+        let writing_user_message = format!(
+            "<changelog>\n{changelog}\n</changelog>\n\n\
+             <analysis>\n{analysis_text}\n</analysis>"
         );
 
-        let response = client
-            .exec_chat(&model_iden, chat_req, Some(&chat_options))
+        let writing_req = ChatRequest::default()
+            .with_system(writing_system)
+            .append_message(ChatMessage::user(writing_user_message));
+
+        debug!(model_iden = model_iden, "Sending writing request (step 2)");
+
+        let writing_response = client
+            .exec_chat(&model_iden, writing_req, Some(&writing_options))
             .await?;
 
-        let raw_text = response
-            .into_first_text()
-            .filter(|t| !t.trim().is_empty())
-            .ok_or_else(|| AiError::InvalidResponse("AI returned an empty response".to_string()))?;
-
-        debug!(raw_len = raw_text.len(), "Received AI response");
-
-        // Strip markdown code fences if the model wraps the JSON
-        let json_str = strip_code_fences(&raw_text);
-
-        let enhanced: EnhancedChangelog = serde_json::from_str(json_str).map_err(|e| {
-            AiError::InvalidResponse(format!(
-                "Failed to parse AI JSON response: {e}\nRaw response:\n{raw_text}"
-            ))
-        })?;
-
-        let total_sections: usize = enhanced.releases.iter().map(|r| r.sections.len()).sum();
-        let total_entries: usize = enhanced
-            .releases
-            .iter()
-            .flat_map(|r| &r.sections)
-            .map(|s| s.entries.len())
-            .sum();
+        let raw_text = extract_response_text(writing_response, "writing")?;
         debug!(
-            release_count = enhanced.releases.len(),
-            total_sections = total_sections,
-            total_entries = total_entries,
-            "Parsed AI response structure"
+            raw_len = raw_text.len(),
+            "Received writing response (step 2)"
         );
+
+        let enhanced = parse_enhanced_changelog(&raw_text)?;
 
         render_markdown(&enhanced, format)
     }
+}
+
+/// Extract first non-empty text from a chat response, or return an `AiError`.
+fn extract_response_text(
+    response: genai::chat::ChatResponse,
+    step_label: &str,
+) -> Result<String, AiError> {
+    response
+        .into_first_text()
+        .filter(|t| !t.trim().is_empty())
+        .ok_or_else(|| {
+            AiError::InvalidResponse(format!("AI returned an empty {step_label} response"))
+        })
+}
+
+/// Parse a JSON response string into an `EnhancedChangelog`.
+fn parse_enhanced_changelog(raw_text: &str) -> Result<EnhancedChangelog, AiError> {
+    let json_str = strip_code_fences(raw_text);
+    serde_json::from_str(json_str).map_err(|e| {
+        AiError::InvalidResponse(format!(
+            "Failed to parse AI JSON response: {e}\nRaw response:\n{raw_text}"
+        ))
+    })
 }
 
 /// Strip optional markdown code fences (```json ... ```) from a string.

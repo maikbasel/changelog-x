@@ -1,8 +1,11 @@
-use std::cell::Cell;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use console::style;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+
+/// Sentinel value representing "no current step" (`None`).
+const STEP_NONE: usize = usize::MAX;
 
 // indicatif template placeholders look like Rust format args but are not.
 #[allow(clippy::literal_string_with_formatting_args)]
@@ -27,7 +30,7 @@ pub struct Pipeline {
     bars: Vec<ProgressBar>,
     labels: Vec<String>,
     total: usize,
-    current: Cell<Option<usize>>,
+    current: AtomicUsize,
     start: Instant,
 }
 
@@ -56,7 +59,7 @@ impl Pipeline {
             bars,
             labels,
             total,
-            current: Cell::new(None),
+            current: AtomicUsize::new(STEP_NONE),
             start: Instant::now(),
         }
     }
@@ -66,21 +69,25 @@ impl Pipeline {
     /// On the first call, activates step 0. On subsequent calls, finishes the
     /// current step and activates the next one.
     pub fn advance(&self) {
-        let next = self.current.get().map_or(0, |i| {
-            self.mark_done(i);
-            i + 1
-        });
+        let cur = self.current.load(Ordering::Relaxed);
+        let next = if cur == STEP_NONE {
+            0
+        } else {
+            self.mark_done(cur);
+            cur + 1
+        };
 
         if next < self.total {
             self.activate(next);
-            self.current.set(Some(next));
+            self.current.store(next, Ordering::Relaxed);
         }
     }
 
     /// Mark the last active step as done and print a timing summary.
     pub fn finish_all(&self) {
-        if let Some(i) = self.current.get() {
-            self.mark_done(i);
+        let cur = self.current.load(Ordering::Relaxed);
+        if cur != STEP_NONE {
+            self.mark_done(cur);
         }
 
         let elapsed = self.start.elapsed();
@@ -98,12 +105,13 @@ impl Pipeline {
 
     /// Mark the current step as failed with a red cross and message.
     pub fn fail(&self, msg: &str) {
-        if let Some(i) = self.current.get()
-            && let Some(pb) = self.bars.get(i)
+        let cur = self.current.load(Ordering::Relaxed);
+        if cur != STEP_NONE
+            && let Some(pb) = self.bars.get(cur)
         {
             let prefix = format!(
                 "  [{}/{}] {}",
-                i + 1,
+                cur + 1,
                 self.total,
                 style("\u{2717}").red().bold()
             );

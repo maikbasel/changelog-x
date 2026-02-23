@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
-use changelog_x::ai::AiEnhancer;
 use changelog_x::ai::credentials::{self, Provider};
-use changelog_x::changelog::{ChangelogGenerator, GenerateOptions, read_commit_summaries};
+use changelog_x::ai::{AiEnhancer, gather_project_context};
+use changelog_x::changelog::{ChangelogGenerator, GenerateOptions};
 use changelog_x::config::{
     ChangelogFormat, get_user_config_path, load_config, save_user_ai_config,
 };
@@ -260,7 +260,8 @@ async fn cmd_generate(
         "Generating changelog",
     ];
     if ai {
-        steps.push("Enhancing with AI");
+        steps.push("Analyzing changelog");
+        steps.push("Writing changelog");
     }
 
     let pipeline = Pipeline::new(&steps);
@@ -313,12 +314,12 @@ async fn cmd_generate(
         pipeline.advance();
         let fmt = resolve_format(format_flag.as_deref(), &config.changelog.format)?;
         let ai_enhancer = AiEnhancer::new(config.ai.clone());
-        let context = if generate_result.commits.is_empty() {
-            None
-        } else {
-            Some(generate_result.commits.as_slice())
-        };
-        match ai_enhancer.enhance(&changelog, context, &fmt).await {
+        let project_ctx = gather_project_context();
+        let step_cb = || pipeline.advance();
+        match ai_enhancer
+            .enhance(&changelog, project_ctx.as_ref(), &fmt, Some(&step_cb))
+            .await
+        {
             Ok(result) => {
                 changelog = result;
                 pipeline.finish_all();
@@ -370,8 +371,9 @@ async fn cmd_enhance(
     let pipeline = Pipeline::new(&[
         "Loading configuration",
         "Reading file",
-        "Reading git history",
-        "Enhancing with AI",
+        "Gathering project context",
+        "Analyzing changelog",
+        "Writing changelog",
     ]);
 
     // Step 1: Load config
@@ -383,19 +385,18 @@ async fn cmd_enhance(
     pipeline.advance();
     let content = fs::read_to_string(file).with_context(|| format!("Failed to read {file}"))?;
 
-    // Step 3: Read git history (best-effort)
+    // Step 3: Gather project context (best-effort)
     pipeline.advance();
-    let summaries = read_commit_summaries(500);
-    let commit_ctx = if summaries.is_empty() {
-        None
-    } else {
-        Some(summaries.as_slice())
-    };
+    let project_ctx = gather_project_context();
 
-    // Step 4: Enhance with AI
+    // Step 4-5: Two-step AI enhancement (analyzing → writing)
     pipeline.advance();
     let ai_enhancer = AiEnhancer::new(config.ai.clone());
-    let result = match ai_enhancer.enhance(&content, commit_ctx, &fmt).await {
+    let step_cb = || pipeline.advance();
+    let result = match ai_enhancer
+        .enhance(&content, project_ctx.as_ref(), &fmt, Some(&step_cb))
+        .await
+    {
         Ok(text) => {
             pipeline.finish_all();
             text

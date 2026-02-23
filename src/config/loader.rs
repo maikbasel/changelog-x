@@ -66,6 +66,18 @@ pub struct AiConfig {
     /// Model name to use
     #[serde(default)]
     pub model: Option<String>,
+
+    /// Sampling temperature (0.0–2.0). Falls back to 0.3 when unset.
+    #[serde(default)]
+    pub temperature: Option<f64>,
+
+    /// Override project description for AI context (replaces auto-detected value)
+    #[serde(default)]
+    pub project_description: Option<String>,
+
+    /// Target audience: "end-users", "developers", "library-consumers"
+    #[serde(default)]
+    pub target_audience: Option<String>,
 }
 
 impl AiConfig {
@@ -201,6 +213,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_ai_config_default_temperature() {
+        let config = AiConfig::default();
+        assert_eq!(config.temperature, None);
+    }
+
+    #[test]
     fn test_ai_config_default() {
         let config = AiConfig::default();
         assert_eq!(config.provider, None);
@@ -217,7 +235,7 @@ mod tests {
     fn test_ai_is_configured_true_when_provider_set() {
         let config = AiConfig {
             provider: Some("openai".to_string()),
-            model: None,
+            ..AiConfig::default()
         };
         assert!(config.is_configured());
     }
@@ -286,6 +304,7 @@ mod tests {
             ai: AiConfig {
                 provider: Some("gemini".to_string()),
                 model: Some("gemini-pro".to_string()),
+                ..AiConfig::default()
             },
         };
 
@@ -295,6 +314,20 @@ mod tests {
         assert!(toml_str.contains("tag_pattern = \"release-*\""));
         assert!(toml_str.contains("provider = \"gemini\""));
         assert!(toml_str.contains("model = \"gemini-pro\""));
+    }
+
+    #[test]
+    fn test_app_config_deserialize_temperature_from_toml() {
+        let toml_str = r#"
+            [ai]
+            provider = "openai"
+            model = "gpt-4o"
+            temperature = 0.5
+        "#;
+
+        let config: AppConfig = toml::from_str(toml_str).expect("Failed to parse TOML");
+
+        assert_eq!(config.ai.temperature, Some(0.5));
     }
 
     #[test]
