@@ -20,7 +20,7 @@ tokio = { version = "1", features = ["full"] }
 
 # Changelog generation
 git-cliff-core = "2"
-git-conventional = "0.12"
+git-conventional = "1.0"
 
 # AI integration
 genai = "0.5"
@@ -31,10 +31,10 @@ inquire = { version = "0.9", features = ["editor"] }
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
+toml = "0.9"
 
 # JSON Schema generation for structured AI output
-schemars = "0.8"
+schemars = "1.2"
 
 # Template rendering for changelog formats
 tera = "1"
@@ -47,8 +47,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Terminal output
-console = "0.15"
-indicatif = "0.17"
+console = "0.16"
+indicatif = "0.18"
 
 # Error handling
 anyhow = "1"
