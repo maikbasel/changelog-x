@@ -168,10 +168,13 @@ pub fn get_api_key(provider_name: &str) -> Result<String, CredentialError> {
 /// Check if an API key exists in the system keyring
 #[must_use]
 pub fn has_api_key(provider_name: &str) -> bool {
-    Entry::new(KEYRING_SERVICE, provider_name)
-        .ok()
-        .and_then(|entry| entry.get_password().ok())
-        .is_some()
+    match Entry::new(KEYRING_SERVICE, provider_name).and_then(|entry| entry.get_password()) {
+        Ok(_) => true,
+        Err(e) => {
+            tracing::debug!(provider = provider_name, error = %e, "Keyring check failed");
+            false
+        }
+    }
 }
 
 /// Delete an API key from the system keyring

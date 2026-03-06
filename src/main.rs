@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
+use changelog_x::ai::commit_data;
 use changelog_x::ai::credentials::{self, Provider};
-use changelog_x::ai::{AiEnhancer, gather_project_context};
+use changelog_x::ai::{AiGenerator, gather_project_context};
 use changelog_x::changelog::{ChangelogGenerator, GenerateOptions};
 use changelog_x::config::{
     ChangelogFormat, get_user_config_path, load_config, save_user_ai_config,
@@ -10,6 +11,7 @@ use changelog_x::{AppError, ChangelogError};
 use clap::{Parser, Subcommand};
 use console::{Term, style};
 use inquire::{Editor, InquireError};
+use regex::Regex;
 use std::fs;
 use std::path::Path;
 use tracing::debug;
@@ -33,10 +35,6 @@ struct Cli {
 enum Commands {
     /// Generate a changelog from conventional commits
     Generate {
-        /// Enhance changelog with AI after generation
-        #[arg(long)]
-        ai: bool,
-
         /// Print to stdout instead of writing file
         #[arg(long)]
         stdout: bool,
@@ -56,25 +54,6 @@ enum Commands {
         /// Generate changelog for unreleased commits only (since latest tag)
         #[arg(long, conflicts_with_all = ["from", "to"])]
         unreleased: bool,
-
-        /// Changelog format: keep-a-changelog or common-changelog
-        #[arg(long)]
-        format: Option<String>,
-    },
-
-    /// Enhance an existing changelog file with AI
-    #[command(arg_required_else_help = true)]
-    Enhance {
-        /// File to enhance
-        file: Option<String>,
-
-        /// Print result without overwriting file
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Write to different file instead of overwriting
-        #[arg(short, long)]
-        output: Option<String>,
 
         /// Changelog format: keep-a-changelog or common-changelog
         #[arg(long)]
@@ -107,6 +86,33 @@ enum Commands {
 
 #[derive(Debug, Subcommand)]
 enum AiAction {
+    /// Generate changelog directly from git commits using AI
+    Generate {
+        /// Print to stdout instead of writing file
+        #[arg(long)]
+        stdout: bool,
+
+        /// Output file path
+        #[arg(short, long, default_value = "CHANGELOG.md")]
+        output: String,
+
+        /// Start from this git tag
+        #[arg(long, conflicts_with = "unreleased")]
+        from: Option<String>,
+
+        /// End at this git tag
+        #[arg(long, conflicts_with = "unreleased")]
+        to: Option<String>,
+
+        /// Generate changelog for unreleased commits only (since latest tag)
+        #[arg(long, conflicts_with_all = ["from", "to"])]
+        unreleased: bool,
+
+        /// Changelog format: keep-a-changelog or common-changelog
+        #[arg(long)]
+        format: Option<String>,
+    },
+
     /// Show AI configuration status
     Status,
 
@@ -184,24 +190,13 @@ async fn run() -> Result<()> {
 
     match cli.command {
         Some(Commands::Generate {
-            ai,
             stdout,
             output,
             from,
             to,
             unreleased,
             format,
-        }) => cmd_generate(ai, stdout, &output, from, to, unreleased, format).await,
-
-        Some(Commands::Enhance {
-            file,
-            dry_run,
-            output,
-            format,
-        }) => {
-            let file = file.unwrap_or_else(|| "CHANGELOG.md".into());
-            cmd_enhance(&file, dry_run, output, format).await
-        }
+        }) => cmd_generate(stdout, &output, from, to, unreleased, format),
 
         Some(Commands::Init { force, skip_ai }) => cmd_init(force, skip_ai).await,
 
@@ -210,7 +205,6 @@ async fn run() -> Result<()> {
         Some(Commands::Config { action }) => cmd_config(action),
 
         None => {
-            // No subcommand: show help
             use clap::CommandFactory;
             Cli::command().print_help()?;
             Ok(())
@@ -235,23 +229,22 @@ fn resolve_format(
     )
 }
 
-async fn cmd_generate(
-    ai: bool,
+fn cmd_generate(
     stdout: bool,
     output: &str,
     from: Option<String>,
     to: Option<String>,
     unreleased: bool,
-    format_flag: Option<String>,
+    _format_flag: Option<String>,
 ) -> Result<()> {
     debug!(
-        "Generate command: ai={}, stdout={}, output={}, from={:?}, to={:?}, unreleased={}",
-        ai, stdout, output, from, to, unreleased
+        "Generate command: stdout={}, output={}, from={:?}, to={:?}, unreleased={}",
+        stdout, output, from, to, unreleased
     );
 
     let term = Term::stdout();
 
-    let mut steps: Vec<&str> = vec![
+    let steps: Vec<&str> = vec![
         "Loading configuration",
         "Initializing repository",
         "Resolving commits",
@@ -259,18 +252,12 @@ async fn cmd_generate(
         "Building releases",
         "Generating changelog",
     ];
-    if ai {
-        steps.push("Analyzing changelog");
-        steps.push("Writing changelog");
-    }
 
     let pipeline = Pipeline::new(&steps);
 
-    // Step 1: Loading configuration
     pipeline.advance();
     let config = load_config(None).context("Failed to load configuration")?;
 
-    // Generate changelog (steps 2-6 are advanced by the callback)
     let generator = ChangelogGenerator::new(config.changelog.clone());
     let options = GenerateOptions {
         from_tag: from,
@@ -280,9 +267,7 @@ async fn cmd_generate(
 
     let generate_result = match generator.generate(&options, Some(&|| pipeline.advance())) {
         Ok(result) => {
-            if !ai {
-                pipeline.finish_all();
-            }
+            pipeline.finish_all();
             result
         }
         Err(ChangelogError::NoCommits) => {
@@ -307,35 +292,11 @@ async fn cmd_generate(
         }
     };
 
-    let mut changelog = generate_result.changelog;
+    let changelog = generate_result.changelog;
 
-    // AI enhancement (if --ai flag)
-    if ai {
-        pipeline.advance();
-        let fmt = resolve_format(format_flag.as_deref(), &config.changelog.format)?;
-        let ai_enhancer = AiEnhancer::new(config.ai.clone());
-        let project_ctx = gather_project_context();
-        let step_cb = || pipeline.advance();
-        match ai_enhancer
-            .enhance(&changelog, project_ctx.as_ref(), &fmt, Some(&step_cb))
-            .await
-        {
-            Ok(result) => {
-                changelog = result;
-                pipeline.finish_all();
-            }
-            Err(e) => {
-                pipeline.fail(&format!("{e}"));
-                return Err(e).context("AI enhancement failed");
-            }
-        }
-    }
-
-    // Output: stdout or file
     if stdout {
         term.write_line(&changelog)?;
     } else {
-        // Use CLI output flag if not default, otherwise use config
         let output_path = if output == "CHANGELOG.md" {
             &config.changelog.output
         } else {
@@ -355,77 +316,7 @@ async fn cmd_generate(
     Ok(())
 }
 
-async fn cmd_enhance(
-    file: &str,
-    dry_run: bool,
-    output: Option<String>,
-    format_flag: Option<String>,
-) -> Result<()> {
-    debug!(
-        "Enhance command: file={}, dry_run={}, output={:?}",
-        file, dry_run, output
-    );
-
-    let term = Term::stdout();
-
-    let pipeline = Pipeline::new(&[
-        "Loading configuration",
-        "Reading file",
-        "Gathering project context",
-        "Analyzing changelog",
-        "Writing changelog",
-    ]);
-
-    // Step 1: Load config
-    pipeline.advance();
-    let config = load_config(None).context("Failed to load configuration")?;
-    let fmt = resolve_format(format_flag.as_deref(), &config.changelog.format)?;
-
-    // Step 2: Read the input file
-    pipeline.advance();
-    let content = fs::read_to_string(file).with_context(|| format!("Failed to read {file}"))?;
-
-    // Step 3: Gather project context (best-effort)
-    pipeline.advance();
-    let project_ctx = gather_project_context();
-
-    // Step 4-5: Two-step AI enhancement (analyzing → writing)
-    pipeline.advance();
-    let ai_enhancer = AiEnhancer::new(config.ai.clone());
-    let step_cb = || pipeline.advance();
-    let result = match ai_enhancer
-        .enhance(&content, project_ctx.as_ref(), &fmt, Some(&step_cb))
-        .await
-    {
-        Ok(text) => {
-            pipeline.finish_all();
-            text
-        }
-        Err(e) => {
-            pipeline.fail(&format!("{e}"));
-            return Err(e).context("AI enhancement failed");
-        }
-    };
-
-    // Output
-    if dry_run {
-        term.write_line(&result)?;
-    } else {
-        let output_path = output.as_deref().unwrap_or(file);
-        fs::write(output_path, &result)
-            .with_context(|| format!("Failed to write to {output_path}"))?;
-
-        term.write_line(&format!(
-            "{} Enhanced changelog written to {}",
-            style("✓").green().bold(),
-            style(output_path).cyan()
-        ))?;
-    }
-
-    Ok(())
-}
-
-#[allow(clippy::unused_async)] // Will use async when implemented
+#[allow(clippy::unused_async)]
 async fn cmd_init(force: bool, skip_ai: bool) -> Result<()> {
     debug!("Init command: force={}, skip_ai={}", force, skip_ai);
 
@@ -437,11 +328,18 @@ async fn cmd_init(force: bool, skip_ai: bool) -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::unused_async)]
 async fn cmd_ai(action: AiAction) -> Result<()> {
     debug!("AI command: {:?}", action);
 
     match action {
+        AiAction::Generate {
+            stdout,
+            output,
+            from,
+            to,
+            unreleased,
+            format,
+        } => cmd_ai_generate(stdout, &output, from, to, unreleased, format).await,
         AiAction::Status => cmd_ai_status(),
         AiAction::Setup => cmd_ai_setup(),
         AiAction::Auth { action } => match action {
@@ -449,6 +347,116 @@ async fn cmd_ai(action: AiAction) -> Result<()> {
             Some(AuthAction::Clear) => cmd_ai_auth_clear(),
         },
     }
+}
+
+async fn cmd_ai_generate(
+    stdout: bool,
+    output: &str,
+    from: Option<String>,
+    to: Option<String>,
+    unreleased: bool,
+    format_flag: Option<String>,
+) -> Result<()> {
+    debug!(
+        "AI generate command: stdout={}, output={}, from={:?}, to={:?}, unreleased={}",
+        stdout, output, from, to, unreleased
+    );
+
+    let term = Term::stdout();
+
+    let pipeline = Pipeline::new(&[
+        "Loading configuration",
+        "Extracting commits",
+        "Computing diff stats",
+        "Gathering project context",
+        "Analyzing commits",
+        "Writing changelog",
+    ]);
+
+    // Step 1: Load configuration
+    pipeline.advance();
+    let config = load_config(None).context("Failed to load configuration")?;
+    let fmt = resolve_format(format_flag.as_deref(), &config.changelog.format)?;
+
+    // Step 2: Extract commits and group into releases
+    pipeline.advance();
+    let tag_pattern = config
+        .changelog
+        .tag_pattern
+        .as_ref()
+        .and_then(|p| Regex::new(p).ok());
+
+    let releases = match commit_data::extract_releases(
+        from.as_deref(),
+        to.as_deref(),
+        unreleased,
+        tag_pattern.as_ref(),
+    ) {
+        Ok(r) => r,
+        Err(ChangelogError::NoCommits) => {
+            pipeline.fail("No commits found in range");
+            term.write_line("")?;
+            term.write_line("No commits found in the specified range.")?;
+            return Ok(());
+        }
+        Err(e) => {
+            pipeline.fail(&format!("{e}"));
+            return Err(e).context("Failed to extract commits");
+        }
+    };
+
+    let total_commits: usize = releases.iter().map(|r| r.commits.len()).sum();
+    debug!(
+        releases = releases.len(),
+        commits = total_commits,
+        "Extracted commit data"
+    );
+
+    // Step 3: Diff stats already computed during extraction
+    pipeline.advance();
+
+    // Step 4: Gather project context
+    pipeline.advance();
+    let project_ctx = gather_project_context();
+
+    // Steps 5-6: AI analysis + writing
+    pipeline.advance();
+    let ai_gen = AiGenerator::new(config.ai.clone());
+    let step_cb = || pipeline.advance();
+    let changelog = match ai_gen
+        .generate(&releases, project_ctx.as_ref(), &fmt, Some(&step_cb))
+        .await
+    {
+        Ok(text) => {
+            pipeline.finish_all();
+            text
+        }
+        Err(e) => {
+            pipeline.fail(&format!("{e}"));
+            return Err(e).context("AI generation failed");
+        }
+    };
+
+    if stdout {
+        term.write_line(&changelog)?;
+    } else {
+        let output_path = if output == "CHANGELOG.md" {
+            &config.changelog.output
+        } else {
+            output
+        };
+
+        fs::write(output_path, &changelog)
+            .with_context(|| format!("Failed to write changelog to {output_path}"))?;
+
+        term.write_line(&format!(
+            "{} AI changelog written to {}",
+            style("✓").green().bold(),
+            style(output_path).cyan()
+        ))?;
+    }
+
+    Ok(())
 }
 
 fn cmd_ai_status() -> Result<()> {
@@ -489,10 +497,14 @@ fn cmd_ai_status() -> Result<()> {
                 style("stored in system keyring").green()
             ))?;
         } else {
+            let err_detail = credentials::get_api_key(provider_name)
+                .err()
+                .map(|e| format!(" ({e})"));
             term.write_line(&format!(
-                "  {}  {}",
+                "  {}  {}{}",
                 style("API key:").cyan(),
-                style("not set").red()
+                style("not set").red(),
+                style(err_detail.as_deref().unwrap_or("")).dim()
             ))?;
             term.write_line(&format!(
                 "\n  {} Run {} to store an API key",
@@ -576,6 +588,11 @@ fn cmd_ai_setup() -> Result<()> {
         match ui::password_input(&format!("API key for {provider}:")) {
             Ok(key) => {
                 credentials::store_api_key(&provider, &key)?;
+                term.write_line(&format!(
+                    "  {} API key stored (length: {})",
+                    style("✓").green().bold(),
+                    key.len()
+                ))?;
             }
             Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
                 term.write_line(&format!("\n{}", style("Setup cancelled.").dim()))?;
@@ -633,6 +650,7 @@ fn cmd_ai_auth() -> Result<()> {
 
     match ui::password_input(&format!("API key for {display_name}:")) {
         Ok(key) => {
+            let key_len = key.len();
             if let Some(p) = provider {
                 credentials::store_api_key(&p, &key)?;
             } else {
@@ -643,6 +661,10 @@ fn cmd_ai_auth() -> Result<()> {
                     .set_password(&key)
                     .map_err(|e| changelog_x::CredentialError::Store(e.to_string()))?;
             }
+            term.write_line(&format!(
+                "  {} API key stored (length: {key_len})",
+                style("✓").green().bold(),
+            ))?;
         }
         Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
             term.write_line(&format!("\n{}", style("Cancelled.").dim()))?;

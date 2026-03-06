@@ -49,6 +49,9 @@ pub enum ChangelogError {
 
     #[error("Failed to generate changelog: {0}")]
     Generation(String),
+
+    #[error("Failed to compute diff stats: {0}")]
+    DiffStats(String),
 }
 
 /// AI provider and enhancement errors
@@ -97,6 +100,9 @@ impl ChangelogError {
             Self::ParseCommits(_) => Some("Ensure commits follow: <type>[scope]: <description>"),
             Self::Generation(_) => {
                 Some("This may be a bug — please file an issue at the project repository")
+            }
+            Self::DiffStats(_) => {
+                Some("Diff stats computation failed — the commit may have an unusual structure")
             }
         }
     }
@@ -156,7 +162,9 @@ impl AiError {
             Self::Connection(_) => {
                 Some("Check your network connection and verify the provider endpoint")
             }
-            Self::Request(_) => Some("Verify your API key is valid — run `cgx ai status` to check"),
+            Self::Request(_) => Some(
+                "Verify your API key: run `cgx ai status`, check keyring with `secret-tool lookup service cgx username <provider>`, or set the env var directly",
+            ),
             Self::InvalidResponse(_) => Some("Try again or switch to a different model"),
             Self::RateLimited => Some("Wait a moment and retry, or switch to a different provider"),
         }

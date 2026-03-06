@@ -1,7 +1,8 @@
+pub mod commit_data;
 pub mod context;
 pub mod credentials;
-mod enhancer;
+mod generator;
 
 pub use context::{ProjectContext, gather_project_context};
 pub use credentials::Provider;
-pub use enhancer::AiEnhancer;
+pub use generator::{AiEnhancer, AiGenerator};

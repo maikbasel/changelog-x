@@ -30,6 +30,9 @@ pub struct ProjectContext {
     pub repository: Option<String>,
     pub version: Option<String>,
     pub project_type: ProjectType,
+    pub readme_summary: Option<String>,
+    pub doc_summaries: Vec<String>,
+    pub ai_instructions: Option<String>,
 }
 
 /// Gather project context from `Cargo.toml` in the current directory (best-effort).
@@ -88,13 +91,115 @@ fn gather_project_context_from(path: &Path) -> Option<ProjectContext> {
         "Gathered project context from Cargo.toml"
     );
 
+    let readme_summary = read_readme_summary();
+    let doc_summaries = read_doc_summaries();
+    let ai_instructions = read_ai_context_files();
+
     Some(ProjectContext {
         name,
         description,
         repository,
         version,
         project_type,
+        readme_summary,
+        doc_summaries,
+        ai_instructions,
     })
+}
+
+/// Read the first ~500 characters of README.md as a project summary.
+fn read_readme_summary() -> Option<String> {
+    let path = Path::new("README.md");
+    if !path.exists() {
+        return None;
+    }
+    let content = std::fs::read_to_string(path).ok()?;
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let summary = if trimmed.len() > 500 {
+        let boundary = trimmed[..500].rfind('\n').unwrap_or(500);
+        &trimmed[..boundary]
+    } else {
+        trimmed
+    };
+    debug!("Read README summary ({} chars)", summary.len());
+    Some(summary.to_string())
+}
+
+/// Read opening text from docs/*.md files (max 5, ~200 chars each).
+fn read_doc_summaries() -> Vec<String> {
+    let docs_dir = Path::new("docs");
+    if !docs_dir.is_dir() {
+        return Vec::new();
+    }
+
+    let mut summaries = Vec::new();
+    let entries: Vec<_> = std::fs::read_dir(docs_dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
+        .take(5)
+        .collect();
+
+    for entry in entries {
+        if let Ok(content) = std::fs::read_to_string(entry.path()) {
+            let trimmed = content.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let excerpt = if trimmed.len() > 200 {
+                let boundary = trimmed[..200].rfind('\n').unwrap_or(200);
+                &trimmed[..boundary]
+            } else {
+                trimmed
+            };
+            summaries.push(excerpt.to_string());
+        }
+    }
+
+    if !summaries.is_empty() {
+        debug!("Read {} doc summaries", summaries.len());
+    }
+
+    summaries
+}
+
+/// Read project-relevant sections from AI context files.
+///
+/// Checks CLAUDE.md, AGENT.md, and .github/copilot-instructions.md.
+/// Truncates to ~1000 chars total.
+fn read_ai_context_files() -> Option<String> {
+    let candidates = ["CLAUDE.md", "AGENT.md", ".github/copilot-instructions.md"];
+
+    for candidate in &candidates {
+        let path = Path::new(candidate);
+        if path.exists()
+            && let Ok(content) = std::fs::read_to_string(path)
+        {
+            let trimmed = content.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let excerpt = if trimmed.len() > 1000 {
+                let boundary = trimmed[..1000].rfind('\n').unwrap_or(1000);
+                &trimmed[..boundary]
+            } else {
+                trimmed
+            };
+            debug!(
+                "Read AI context from {} ({} chars)",
+                candidate,
+                excerpt.len()
+            );
+            return Some(excerpt.to_string());
+        }
+    }
+
+    None
 }
 
 /// Format project context into a compact block for AI prompt injection.
@@ -111,6 +216,15 @@ pub fn format_project_context(ctx: &ProjectContext) -> String {
     }
     if let Some(version) = &ctx.version {
         let _ = writeln!(out, "VERSION: {version}");
+    }
+    if let Some(readme) = &ctx.readme_summary {
+        let _ = writeln!(out, "README: {readme}");
+    }
+    for doc in &ctx.doc_summaries {
+        let _ = writeln!(out, "DOC: {doc}");
+    }
+    if let Some(ai_ctx) = &ctx.ai_instructions {
+        let _ = writeln!(out, "AI_CONTEXT: {ai_ctx}");
     }
     out
 }
@@ -129,6 +243,9 @@ mod tests {
             repository: Some("https://github.com/maikbasel/changelog-x".into()),
             version: Some("0.1.0".into()),
             project_type: ProjectType::Cli,
+            readme_summary: None,
+            doc_summaries: vec![],
+            ai_instructions: None,
         }
     }
 
@@ -151,6 +268,9 @@ mod tests {
             repository: None,
             version: None,
             project_type: ProjectType::Library,
+            readme_summary: None,
+            doc_summaries: vec![],
+            ai_instructions: None,
         };
         let result = format_project_context(&ctx);
         assert!(result.contains("PROJECT: my-lib"));

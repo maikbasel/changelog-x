@@ -1,4 +1,4 @@
-use inquire::{Confirm, CustomUserError, Password, Select, Text};
+use inquire::{Confirm, CustomUserError, Password, PasswordDisplayMode, Select, Text};
 use std::fmt::Display;
 
 /// Prompt the user to confirm an action
@@ -68,5 +68,17 @@ pub fn text_input_with_suggestions(
 ///
 /// Returns `InquireError` if the prompt fails or is cancelled.
 pub fn password_input(message: &str) -> Result<String, inquire::InquireError> {
-    Password::new(message).without_confirmation().prompt()
+    Password::new(message)
+        .with_display_mode(PasswordDisplayMode::Masked)
+        .with_validator(|input: &str| {
+            if input.trim().is_empty() {
+                Ok(inquire::validator::Validation::Invalid(
+                    "API key cannot be empty".into(),
+                ))
+            } else {
+                Ok(inquire::validator::Validation::Valid)
+            }
+        })
+        .without_confirmation()
+        .prompt()
 }
