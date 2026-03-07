@@ -1,5 +1,8 @@
 # ChangelogX (cgx)
 
+[![CI](https://github.com/maikbasel/changelog-x/actions/workflows/ci.yml/badge.svg)](https://github.com/maikbasel/changelog-x/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
+
 Generate high-quality changelogs from [conventional commits](https://www.conventionalcommits.org), optionally enhanced with AI.
 
 `cgx` parses your git history, groups commits by type, and outputs a structured changelog in [Keep a Changelog](https://keepachangelog.com) or [Common Changelog](https://common-changelog.org) format. When AI is enabled, it can either enhance existing entries or generate the entire changelog directly from structured commit data, enriched with project context and rendered via Tera templates.
