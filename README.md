@@ -2,12 +2,15 @@
 
 Generate high-quality changelogs from [conventional commits](https://www.conventionalcommits.org), optionally enhanced with AI.
 
-`cgx` parses your git history, groups commits by type, and outputs a structured changelog in [Keep a Changelog](https://keepachangelog.com) or [Common Changelog](https://common-changelog.org) format. When AI enhancement is enabled, it rewrites entries for clarity and consistency using the provider of your choice.
+`cgx` parses your git history, groups commits by type, and outputs a structured changelog in [Keep a Changelog](https://keepachangelog.com) or [Common Changelog](https://common-changelog.org) format. When AI is enabled, it can either enhance existing entries or generate the entire changelog directly from structured commit data, enriched with project context and rendered via Tera templates.
 
 ## Features
 
 - Changelog generation from conventional commits via [git-cliff](https://git-cliff.org)
+- Direct AI changelog generation from structured git commit data with diff stats
 - AI enhancement with support for OpenAI, Anthropic, Gemini, Groq, DeepSeek, and Ollama (local)
+- Project context awareness &mdash; auto-gathers README, docs, Cargo.toml metadata, and AI instruction files
+- Template-based rendering via [Tera](https://keats.github.io/tera/)
 - Multiple output formats (Keep a Changelog 1.1.0, Common Changelog)
 - Layered configuration (user defaults, project overrides, environment variables)
 - Secure credential storage via OS keyring
@@ -29,6 +32,33 @@ cargo build
 
 The first `cargo test` installs [cargo-husky](https://github.com/nickel-org/cargo-husky) pre-commit hooks that automatically run `cargo test`, `cargo clippy`, and `cargo fmt` on each commit.
 
+## Commands
+
+```
+cgx generate                Generate changelog from conventional commits
+cgx ai generate             Generate changelog directly via AI from structured commit data
+cgx ai status               Show AI configuration status
+cgx ai setup                Interactive provider/model/key configuration
+cgx ai auth                 Store API key in system keyring
+cgx ai auth clear            Remove API key from system keyring
+cgx config show             Print fully resolved configuration
+cgx config path             Show configuration file paths
+cgx config edit             Open user config in $EDITOR
+```
+
+Common flags for `generate` and `ai generate`:
+
+| Flag | Description |
+|------|-------------|
+| `--stdout` | Print to stdout instead of writing a file |
+| `-o, --output <path>` | Output file path (default: `CHANGELOG.md`) |
+| `--from <tag>` | Start from this git tag |
+| `--to <tag>` | End at this git tag |
+| `--unreleased` | Only include commits since the latest tag |
+| `--format <fmt>` | `keep-a-changelog` or `common-changelog` |
+
+Global: `-v` / `-vv` for debug / trace logging.
+
 ## Architecture
 
 ```
@@ -37,9 +67,10 @@ src/
   lib.rs              Library re-exports
   error.rs            Error types (thiserror)
   ai/
-    enhancer.rs       AI-powered changelog enhancement via genai
+    generator.rs      AI-powered changelog generation and enhancement (genai + Tera)
+    commit_data.rs    Structured commit data extraction with diff stats (git2)
     credentials.rs    Provider enum, keyring storage, API key resolution
-    context.rs        Commit context passed to AI prompts
+    context.rs        Project context gathering (Cargo.toml, README, docs, AI instructions)
   changelog/
     generator.rs      Changelog generation via git-cliff-core
   config/
@@ -60,9 +91,17 @@ tests/
 | `tokio` | Async runtime |
 | `git-cliff-core` | Changelog generation from conventional commits |
 | `genai` | Provider-agnostic AI (OpenAI, Anthropic, Gemini, Ollama, Groq, DeepSeek) |
+| `git2` | Git repository access for commit and diff extraction |
+| `tera` | Template rendering for changelog output |
+| `schemars` | JSON schema generation for structured AI output |
 | `keyring` | Cross-platform secure credential storage |
 | `inquire` | Interactive terminal prompts |
 | `config` | Layered configuration with env var support |
+| `console` / `indicatif` | Terminal output and progress display |
+| `tracing` / `tracing-subscriber` | Structured logging |
+| `directories` | XDG-compliant config paths |
+| `regex` | Pattern matching (tag filters) |
+| `indexmap` | Ordered maps for deterministic output |
 | `thiserror` / `anyhow` | Library and application error handling |
 
 ### Configuration system
@@ -79,9 +118,16 @@ Relevant code: `src/config/loader.rs`
 
 ### AI integration
 
-AI enhancement uses the `genai` crate for provider-agnostic access. API keys are resolved from environment variables first, then the system keyring. The `AiEnhancer` in `src/ai/enhancer.rs` builds a chat request with system prompt and commit context, sends it to the configured provider, and returns the enhanced changelog text.
+AI changelog generation uses the `genai` crate for provider-agnostic access. The flow:
 
-Relevant code: `src/ai/enhancer.rs`, `src/ai/credentials.rs`
+1. **Extract commits** &mdash; `commit_data.rs` reads git history via `git2`, parses conventional commit messages, and computes per-commit diff stats (files changed, insertions, deletions).
+2. **Gather project context** &mdash; `context.rs` collects metadata from `Cargo.toml`, the project README, files in `docs/`, and optional AI instruction files to give the model domain awareness.
+3. **Generate via AI** &mdash; `generator.rs` (`AiGenerator`) builds a chat request with structured commit data and project context, sends it to the configured provider, and receives a structured JSON response (`EnhancedChangelog`).
+4. **Render with Tera** &mdash; the structured response is rendered into the chosen changelog format using Tera templates embedded in `generator.rs`.
+
+API keys are resolved from environment variables first, then the system keyring.
+
+Relevant code: `src/ai/generator.rs`, `src/ai/commit_data.rs`, `src/ai/context.rs`, `src/ai/credentials.rs`
 
 ## Development
 
@@ -91,6 +137,7 @@ cargo build
 
 # Run the CLI
 cargo run -- generate --stdout
+cargo run -- ai generate --stdout
 cargo run -- ai status
 
 # Run tests
