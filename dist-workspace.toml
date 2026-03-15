@@ -25,3 +25,8 @@ pr-run-mode = "plan"
 tap = "maikbasel/homebrew-tap"
 # Publish Homebrew formula on release
 publish-jobs = ["homebrew"]
+
+# System dependencies for Linux builds (keyring -> libdbus-sys)
+[dist.dependencies.apt]
+libdbus-1-dev = '*'
+pkg-config = '*'
