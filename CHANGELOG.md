@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.1](https://github.com/maikbasel/changelog-x/compare/v0.1.0...v0.1.1) (2026-03-15)
+
+
+### Bug Fixes
+
+* add libdbus-1-dev system dependency for Linux release builds ([ab4e997](https://github.com/maikbasel/changelog-x/commit/ab4e99749120b3bc735e82e072e24dc14c5accbb))
+* **deps:** update rust crate schemars to v1 ([cb1949f](https://github.com/maikbasel/changelog-x/commit/cb1949f9768ee9b21def12b642c854c78ee6ec25))
+* **deps:** update rust crate schemars to v1 ([43a828c](https://github.com/maikbasel/changelog-x/commit/43a828cbb2eef7b60f32c904b434a5fa50afb4b0))
+* **deps:** update rust crate toml to v1 ([dfa20ec](https://github.com/maikbasel/changelog-x/commit/dfa20ec677b88ed225e821810ec6069327010e12))
+* **deps:** update rust crate toml to v1 ([6eae2f8](https://github.com/maikbasel/changelog-x/commit/6eae2f837013c7fae2b2db1c270981e779f06434))
+
 ## 0.1.0 (2026-03-07)
 
 
