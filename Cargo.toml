@@ -20,7 +20,7 @@ tokio = { version = "1", features = ["full"] }
 
 # Changelog generation
 git-cliff-core = "2"
-git-conventional = "0.12"
+git-conventional = "1.0"
 
 # AI integration
 genai = "0.5"
