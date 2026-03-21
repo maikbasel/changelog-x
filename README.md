@@ -19,21 +19,41 @@ Generate high-quality changelogs from [conventional commits](https://www.convent
 - Secure credential storage via OS keyring
 - CI/CD friendly with full environment variable support
 
-## Prerequisites
+## Installation
 
-- [Rust](https://rustup.rs/) 1.85+ (edition 2024)
-- Git
-- A system keyring service (GNOME Keyring / KWallet on Linux, Keychain on macOS, Credential Manager on Windows)
+### Homebrew (macOS / Linux)
 
-## Getting started
+```bash
+brew install maikbasel/tap/changelog-x
+```
+
+### Shell installer (macOS / Linux)
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/maikbasel/changelog-x/releases/latest/download/changelog-x-installer.sh | sh
+```
+
+### PowerShell installer (Windows)
+
+```powershell
+powershell -executionpolicy bypass -c "irm https://github.com/maikbasel/changelog-x/releases/latest/download/changelog-x-installer.ps1 | iex"
+```
+
+### Build from source
 
 ```bash
 git clone https://github.com/maikbasel/changelog-x.git
 cd changelog-x
-cargo build
+cargo install --path .
 ```
 
-The first `cargo test` installs [cargo-husky](https://github.com/nickel-org/cargo-husky) pre-commit hooks that automatically run `cargo test`, `cargo clippy`, and `cargo fmt` on each commit.
+### Pre-built binaries
+
+Download pre-built binaries from the [GitHub Releases](https://github.com/maikbasel/changelog-x/releases) page. Supported platforms:
+
+- macOS (Apple Silicon, Intel)
+- Linux (x86_64, ARM64)
+- Windows (x86_64)
 
 ## Commands
 
@@ -133,6 +153,14 @@ API keys are resolved from environment variables first, then the system keyring.
 Relevant code: `src/ai/generator.rs`, `src/ai/commit_data.rs`, `src/ai/context.rs`, `src/ai/credentials.rs`
 
 ## Development
+
+### Prerequisites
+
+- [Rust](https://rustup.rs/) 1.85+ (edition 2024)
+- Git
+- A system keyring service (GNOME Keyring / KWallet on Linux, Keychain on macOS, Credential Manager on Windows)
+
+The first `cargo test` installs [cargo-husky](https://github.com/nickel-org/cargo-husky) pre-commit hooks that automatically run `cargo test`, `cargo clippy`, and `cargo fmt` on each commit.
 
 ```bash
 # Build (debug)
