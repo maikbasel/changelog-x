@@ -3,15 +3,15 @@
 [![CI](https://github.com/maikbasel/changelog-x/actions/workflows/ci.yml/badge.svg)](https://github.com/maikbasel/changelog-x/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
 
-Generate high-quality changelogs from [conventional commits](https://www.conventionalcommits.org), optionally enhanced with AI.
+Generate high-quality changelogs from your git history using AI, or from conventional commits via [git-cliff](https://git-cliff.org).
 
-`cgx` parses your git history, groups commits by type, and outputs a structured changelog in [Keep a Changelog](https://keepachangelog.com) or [Common Changelog](https://common-changelog.org) format. When AI is enabled, it can either enhance existing entries or generate the entire changelog directly from structured commit data, enriched with project context and rendered via Tera templates.
+`cgx ai generate` uses AI to read your full git history — including diff stats and project context — and produces a polished, user-centric changelog regardless of commit format. `cgx generate` parses [conventional commits](https://www.conventionalcommits.org) via git-cliff for structured output without AI. Both modes support [Keep a Changelog](https://keepachangelog.com) and [Common Changelog](https://common-changelog.org) formats, rendered via Tera templates.
 
 ## Features
 
-- Changelog generation from conventional commits via [git-cliff](https://git-cliff.org)
-- Direct AI changelog generation from structured git commit data with diff stats
-- AI enhancement with support for OpenAI, Anthropic, Gemini, Groq, DeepSeek, and Ollama (local)
+- AI changelog generation from git history &mdash; works with any commit format, enriched with diff stats and project context
+- Conventional commit changelog via [git-cliff](https://git-cliff.org) (no AI required)
+- AI support for OpenAI, Anthropic, Gemini, Groq, DeepSeek, and Ollama (local)
 - Project context awareness &mdash; auto-gathers README, docs, Cargo.toml metadata, and AI instruction files
 - Template-based rendering via [Tera](https://keats.github.io/tera/)
 - Multiple output formats (Keep a Changelog 1.1.0, Common Changelog)
@@ -90,7 +90,7 @@ src/
   lib.rs              Library re-exports
   error.rs            Error types (thiserror)
   ai/
-    generator.rs      AI-powered changelog generation and enhancement (genai + Tera)
+    generator.rs      AI-powered changelog generation (genai + Tera)
     commit_data.rs    Structured commit data extraction with diff stats (git2)
     credentials.rs    Provider enum, keyring storage, API key resolution
     context.rs        Project context gathering (Cargo.toml, README, docs, AI instructions)
@@ -141,12 +141,13 @@ Relevant code: `src/config/loader.rs`
 
 ### AI integration
 
-AI changelog generation uses the `genai` crate for provider-agnostic access. The flow:
+`cgx ai generate` uses the `genai` crate for provider-agnostic access. The flow:
 
-1. **Extract commits** &mdash; `commit_data.rs` reads git history via `git2`, parses conventional commit messages, and computes per-commit diff stats (files changed, insertions, deletions).
+1. **Extract commits** &mdash; `commit_data.rs` reads the full git history via `git2` and computes per-commit diff stats (files changed, insertions, deletions). Works with any commit format &mdash; conventional commits are not required.
 2. **Gather project context** &mdash; `context.rs` collects metadata from `Cargo.toml`, the project README, files in `docs/`, and optional AI instruction files to give the model domain awareness.
-3. **Generate via AI** &mdash; `generator.rs` (`AiGenerator`) builds a chat request with structured commit data and project context, sends it to the configured provider, and receives a structured JSON response (`EnhancedChangelog`).
-4. **Render with Tera** &mdash; the structured response is rendered into the chosen changelog format using Tera templates embedded in `generator.rs`.
+3. **Analyse via AI** &mdash; `generator.rs` (`AiGenerator`) sends structured commit data and project context to the configured provider, receiving a plain-text analysis that groups changes, identifies user-facing impact, and filters noise (CI, tooling, deps, etc.).
+4. **Write via AI** &mdash; a second request takes the analysis and produces a structured JSON changelog (`EnhancedChangelog`), merging related commits into concise entries written for end users.
+5. **Render with Tera** &mdash; the structured response is rendered into the chosen changelog format using Tera templates embedded in `generator.rs`.
 
 API keys are resolved from environment variables first, then the system keyring.
 
