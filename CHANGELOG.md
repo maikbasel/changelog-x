@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.2](https://github.com/maikbasel/changelog-x/compare/v0.1.1...v0.1.2) (2026-03-22)
+
+
+### Bug Fixes
+
+* **deps:** update rust crate git-conventional to v1 ([f138dfc](https://github.com/maikbasel/changelog-x/commit/f138dfc72fadb321741431146ffcdcc626e827bb))
+* **deps:** update rust crate git-conventional to v1 ([0e62f6d](https://github.com/maikbasel/changelog-x/commit/0e62f6d4c750724a952336503d875f665a0a639f))
+* **deps:** update rust-dependencies ([#17](https://github.com/maikbasel/changelog-x/issues/17)) ([896a9b1](https://github.com/maikbasel/changelog-x/commit/896a9b110dae5f83c1df66805a57cbc36932ab3d))
+* **deps:** upgrade aws-lc-sys to 0.39.0 to resolve RUSTSEC-2026-0044..0049 ([f59120e](https://github.com/maikbasel/changelog-x/commit/f59120e8df026614387c5a87f2f01923cf40a6ed))
+
+
+### Documentation
+
+* add pre-built binary install instructions to README ([1e222f7](https://github.com/maikbasel/changelog-x/commit/1e222f74254190b2bfd9bb1ea75b855c5aad47d1))
+* update README to reflect AI-first generation approach ([42f7c7a](https://github.com/maikbasel/changelog-x/commit/42f7c7a8758fcbf5122185b0f88935369a6b7872))
+
 ## [0.1.1](https://github.com/maikbasel/changelog-x/compare/v0.1.0...v0.1.1) (2026-03-15)
 
 
