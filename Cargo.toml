@@ -61,7 +61,7 @@ directories = "6"
 keyring = { version = "3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
 indexmap = "2.13.0"
 regex = "1.12.3"
-git2 = "0.20.4"
+git2 = "0.21.0"
 
 [dev-dependencies]
 tempfile = "3"
