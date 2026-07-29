@@ -1,6 +1,8 @@
 # ChangelogX (cgx)
 
 [![CI](https://github.com/maikbasel/changelog-x/actions/workflows/ci.yml/badge.svg)](https://github.com/maikbasel/changelog-x/actions/workflows/ci.yml)
+[![GitHub release](https://img.shields.io/github/v/release/maikbasel/changelog-x.svg)](https://github.com/maikbasel/changelog-x/releases)
+[![GitHub downloads](https://img.shields.io/github/downloads/maikbasel/changelog-x/total.svg?label=github%20downloads)](https://github.com/maikbasel/changelog-x/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
 
 Generate high-quality changelogs from your git history using AI, or from conventional commits via [git-cliff](https://git-cliff.org).
