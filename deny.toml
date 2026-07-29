@@ -2,11 +2,16 @@
 version = 2
 db-path = "~/.cargo/advisory-db"
 ignore = [
-    # Transitive deps - unmaintained (no upstream fix available, revisit by 2026-06-07)
+    # Transitive deps - unmaintained (no upstream fix available, revisit by 2026-10-01)
     { id = "RUSTSEC-2025-0141", reason = "bincode via git-cliff-core - transitive" },
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error via git-cliff-core/rust-embed - transitive" },
-    # Transitive dep - time DoS vulnerability (via git-cliff-core, revisit by 2026-06-07)
+    # Transitive dep - time DoS vulnerability (via git-cliff-core, revisit by 2026-10-01)
     { id = "RUSTSEC-2026-0009", reason = "time via git-cliff-core - transitive" },
+    # git2 unsoundness fixed in 0.21, blocked on git-cliff-core still pinning git2 0.20
+    # (two libgit2-sys versions cannot link). Neither Remote::list() nor blame_buffer()
+    # is called by this crate. Revisit when git-cliff-core ships git2 0.21.
+    { id = "RUSTSEC-2026-0183", reason = "git2 Remote::list() unsoundness - unused API, blocked on git-cliff-core" },
+    { id = "RUSTSEC-2026-0184", reason = "git2 BlameHunk signature unsoundness - unused API, blocked on git-cliff-core" },
 ]
 
 [licenses]
