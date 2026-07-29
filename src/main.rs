@@ -7,6 +7,7 @@ use changelog_x::config::{
     ChangelogFormat, get_user_config_path, load_config, save_user_ai_config,
 };
 use changelog_x::ui::{self, Pipeline};
+use changelog_x::update;
 use changelog_x::{AppError, ChangelogError};
 use clap::{Parser, Subcommand};
 use console::{Term, style};
@@ -81,6 +82,23 @@ enum Commands {
     Config {
         #[command(subcommand)]
         action: ConfigAction,
+    },
+
+    /// Manage this cgx installation
+    #[command(name = "self")]
+    SelfCmd {
+        #[command(subcommand)]
+        action: SelfAction,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Subcommand)]
+enum SelfAction {
+    /// Update cgx to the latest release
+    Update {
+        /// Reinstall the latest release even if it is already installed
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -188,7 +206,10 @@ async fn run() -> Result<()> {
         .without_time()
         .init();
 
-    match cli.command {
+    // Updating already reports the version it moved to, so it skips the notice below.
+    let notify = !matches!(cli.command, Some(Commands::SelfCmd { .. }));
+
+    let result = match cli.command {
         Some(Commands::Generate {
             stdout,
             output,
@@ -204,12 +225,44 @@ async fn run() -> Result<()> {
 
         Some(Commands::Config { action }) => cmd_config(action),
 
+        Some(Commands::SelfCmd { action }) => cmd_self(action).await,
+
         None => {
             use clap::CommandFactory;
             Cli::command().print_help()?;
             Ok(())
         }
+    };
+
+    result?;
+
+    if notify {
+        update::notify_if_outdated().await;
     }
+
+    Ok(())
+}
+
+async fn cmd_self(action: SelfAction) -> Result<()> {
+    let SelfAction::Update { force } = action;
+
+    let term = Term::stdout();
+    let current = env!("CARGO_PKG_VERSION");
+
+    term.write_line(&format!("{} cgx {current}", style("current:").dim()))?;
+
+    match update::self_update(force).await? {
+        Some(version) => term.write_line(&format!(
+            "{} cgx {version}",
+            style("updated to:").green().bold()
+        ))?,
+        None => term.write_line(&format!(
+            "{} already on the latest release",
+            style("up to date:").green().bold()
+        ))?,
+    }
+
+    Ok(())
 }
 
 /// Resolve the effective changelog format: CLI flag overrides config default.

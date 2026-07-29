@@ -69,6 +69,19 @@ cgx ai auth clear            Remove API key from system keyring
 cgx config show             Print fully resolved configuration
 cgx config path             Show configuration file paths
 cgx config edit             Open user config in $EDITOR
+cgx self update             Update cgx to the latest release
+```
+
+### Updating
+
+`cgx self update` upgrades the binary in place. It works for installs that came from the shell or PowerShell installer, which leave an install receipt describing where the binary lives. Homebrew and `cargo install` own their binaries, so `cgx self update` refuses to touch them and prints the right command instead (`brew upgrade changelog-x`).
+
+Pass `--force` to reinstall the latest release even when it is already installed.
+
+Once a day, `cgx` checks GitHub for a newer release and prints a one-line notice to stderr. The check is capped at two seconds, is skipped when stderr is not a terminal or when `CI` is set, and never blocks a command. Disable it with:
+
+```bash
+export CGX_NO_UPDATE_CHECK=1
 ```
 
 Common flags for `generate` and `ai generate`:
@@ -100,6 +113,7 @@ src/
     generator.rs      Changelog generation via git-cliff-core
   config/
     loader.rs         Layered TOML config (user -> project -> env vars)
+  update.rs           Self-update and daily update notice (axoupdater)
   ui/
     progress.rs       Step-based progress pipeline (indicatif)
     prompts.rs        Interactive prompts (inquire)
@@ -120,6 +134,7 @@ tests/
 | `tera` | Template rendering for changelog output |
 | `schemars` | JSON schema generation for structured AI output |
 | `keyring` | Cross-platform secure credential storage |
+| `axoupdater` | In-place self-update driven by the dist install receipt |
 | `inquire` | Interactive terminal prompts |
 | `config` | Layered configuration with env var support |
 | `console` / `indicatif` | Terminal output and progress display |
