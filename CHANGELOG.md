@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.2.0](https://github.com/maikbasel/changelog-x/compare/v0.1.1...v0.2.0) (2026-07-30)
+
+
+### Features
+
+* **update:** add self update command and daily update notice ([57b04e4](https://github.com/maikbasel/changelog-x/commit/57b04e4da1dcce489509fa9df92658c21af3001f))
+
+
+### Bug Fixes
+
+* **deps:** clear quinn-proto vulnerabilities and rand unsoundness ([6baa056](https://github.com/maikbasel/changelog-x/commit/6baa056050f71a87fe09ab7906e643ef18100b82))
+* **deps:** update dependencies to clear RUSTSEC advisories ([6517ea3](https://github.com/maikbasel/changelog-x/commit/6517ea337c10146513ebea49c9d05f8be098ee0d))
+* **deps:** update rust crate git-conventional to v1 ([f138dfc](https://github.com/maikbasel/changelog-x/commit/f138dfc72fadb321741431146ffcdcc626e827bb))
+* **deps:** update rust crate git-conventional to v1 ([0e62f6d](https://github.com/maikbasel/changelog-x/commit/0e62f6d4c750724a952336503d875f665a0a639f))
+* **deps:** update rust-dependencies ([#17](https://github.com/maikbasel/changelog-x/issues/17)) ([896a9b1](https://github.com/maikbasel/changelog-x/commit/896a9b110dae5f83c1df66805a57cbc36932ab3d))
+* **deps:** update time to 0.3.54 to clear RUSTSEC-2026-0009 ([6a82ea5](https://github.com/maikbasel/changelog-x/commit/6a82ea504065ce41d2dbe89c45627917a7dd44db))
+* **deps:** upgrade aws-lc-sys to 0.39.0 to resolve RUSTSEC-2026-0044..0049 ([f59120e](https://github.com/maikbasel/changelog-x/commit/f59120e8df026614387c5a87f2f01923cf40a6ed))
+* update vulnerable dependencies and resolve cargo-deny failures ([9fe553f](https://github.com/maikbasel/changelog-x/commit/9fe553f96820114ce7717eeb94585dd36f223f48))
+* update vulnerable dependencies and resolve cargo-deny failures ([e671131](https://github.com/maikbasel/changelog-x/commit/e671131337e984609e83be34ea0c8fd2df61a095))
+
+
+### Documentation
+
+* add pre-built binary install instructions to README ([1e222f7](https://github.com/maikbasel/changelog-x/commit/1e222f74254190b2bfd9bb1ea75b855c5aad47d1))
+* **readme:** add release and download badges ([b6c5cab](https://github.com/maikbasel/changelog-x/commit/b6c5cabbb165c5ee1f5214d29edf528320bbfab2))
+* update README to reflect AI-first generation approach ([42f7c7a](https://github.com/maikbasel/changelog-x/commit/42f7c7a8758fcbf5122185b0f88935369a6b7872))
+
 ## [0.1.1](https://github.com/maikbasel/changelog-x/compare/v0.1.0...v0.1.1) (2026-03-15)
 
 
