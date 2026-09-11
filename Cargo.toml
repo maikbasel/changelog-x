@@ -37,7 +37,7 @@ toml = "1.0"
 schemars = "1.0"
 
 # Template rendering for changelog formats
-tera = "1"
+tera = "2"
 
 # Configuration (layered: defaults → user → project → env vars)
 config = { version = "0.15", features = ["convert-case"] }
