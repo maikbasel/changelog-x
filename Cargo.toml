@@ -23,7 +23,7 @@ git-cliff-core = "2"
 git-conventional = "1.0"
 
 # AI integration
-genai = "0.5"
+genai = "0.6"
 
 # Interactive prompts
 inquire = { version = "0.9", features = ["editor"] }
@@ -61,7 +61,7 @@ directories = "6"
 keyring = { version = "3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
 indexmap = "2.13.0"
 regex = "1.12.3"
-git2 = "0.20.4"
+git2 = "0.21.0"
 axoupdater = "0.10.0"
 
 [dev-dependencies]
